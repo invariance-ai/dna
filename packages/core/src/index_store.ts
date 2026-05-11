@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { SymbolRef } from "@invariance/dna-schemas";
 import type { ParsedFile } from "./parser.js";
@@ -44,6 +44,44 @@ export async function writeIndex(root: string, index: DnaIndex): Promise<void> {
 export async function readIndex(root: string): Promise<DnaIndex> {
   const raw = await readFile(indexPath(root), "utf8");
   return JSON.parse(raw) as DnaIndex;
+}
+
+export interface StaleReport {
+  built_at: string;
+  /** Files in the index whose mtime is newer than built_at. */
+  stale_files: string[];
+  /** Files in the index that no longer exist on disk. */
+  missing_files: string[];
+  total_files: number;
+}
+
+/**
+ * Compare each indexed file's mtime against the index's built_at. Used by
+ * `dna validate` and the Stop hook to gate attribution: a stale index will
+ * map a touched file to the wrong symbol set and silently pollute weights.
+ */
+export async function staleFiles(root: string, index: DnaIndex): Promise<StaleReport> {
+  const builtAt = new Date(index.built_at).getTime();
+  const stale_files: string[] = [];
+  const missing_files: string[] = [];
+  await Promise.all(
+    index.files.map(async (rel) => {
+      try {
+        const s = await stat(path.join(root, rel));
+        if (s.mtimeMs > builtAt) stale_files.push(rel);
+      } catch {
+        missing_files.push(rel);
+      }
+    }),
+  );
+  stale_files.sort();
+  missing_files.sort();
+  return {
+    built_at: index.built_at,
+    stale_files,
+    missing_files,
+    total_files: index.files.length,
+  };
 }
 
 export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {

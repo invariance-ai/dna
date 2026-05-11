@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
-import type { Decision } from "@invariance/dna-schemas";
-import { Decision as DecisionSchema } from "@invariance/dna-schemas";
+import { randomUUID } from "node:crypto";
+import type { Decision, Question } from "@invariance/dna-schemas";
+import { Decision as DecisionSchema, Question as QuestionSchema } from "@invariance/dna-schemas";
 import { DnaLlm } from "./client.js";
 
 /**
@@ -9,7 +10,7 @@ import { DnaLlm } from "./client.js";
  * alternative* — not general lessons (those are notes).
  */
 
-const SYSTEM = `You extract design decisions from a conversation or PR thread.
+const SYSTEM = `You extract design decisions AND open questions from a conversation or PR thread.
 
 A *decision* is a deliberate choice the team made about how a symbol should
 work, with a rejected alternative and a rationale. Examples:
@@ -22,20 +23,28 @@ A decision is NOT:
   - a future TODO — only retain choices that were actually made
   - a status update or progress report
 
-Output ONLY one YAML array inside a single fenced code block (\`\`\`yaml ... \`\`\`).
-Each item has exactly these fields:
+An *open question* is something discussed but explicitly left unresolved —
+"what about crypto settlements?", "do we need to handle JPY here?", a TODO that
+flags a real ambiguity. Skip rhetorical questions and questions that were
+answered in the transcript.
 
-  symbol:                  # the symbol the decision applies to
-  decision:                # one-sentence: the choice that was made
-  rejected_alternative:    # one-sentence (omit if there is none)
-  rationale:               # one-sentence (omit if not stated)
-  made_by:                 # name/handle if mentioned (omit otherwise)
-  session:                 # the session/PR/conversation ID provided
+Output ONLY one fenced YAML code block (\`\`\`yaml ... \`\`\`) with this structure:
 
-If the transcript contains zero decisions matching the definition, output an
-empty array (\`[]\`). Do not invent decisions. Prefer recall over precision —
-err on the side of capturing borderline cases rather than dropping them, but
-the decision/rejected/rationale fields must be grounded in the actual text.`;
+  decisions:
+    - symbol:                  # the symbol the decision applies to
+      decision:                # one-sentence: the choice that was made
+      rejected_alternative:    # one-sentence (omit if there is none)
+      rationale:               # one-sentence (omit if not stated)
+      made_by:                 # name/handle if mentioned (omit otherwise)
+      session:                 # the session/PR/conversation ID provided
+
+  questions:
+    - symbol:                  # the symbol the question applies to
+      question:                # one-sentence
+      asked_by:                # name/handle if mentioned (omit otherwise)
+
+Either list can be empty. Do not invent items. Decision rationale and question
+text must be grounded in the actual transcript.`;
 
 export interface ExtractDecisionsInput {
   transcript: string;
@@ -45,6 +54,7 @@ export interface ExtractDecisionsInput {
 
 export interface ExtractDecisionsResult {
   decisions: Decision[];
+  questions: Question[];
   raw_yaml: string;
   dry_run_prompt?: { system: string; user: string };
 }
@@ -63,27 +73,45 @@ export async function extractDecisions(
   if (completion.dry_run_prompt) {
     return {
       decisions: [],
+      questions: [],
       raw_yaml: "[dry-run]",
       dry_run_prompt: completion.dry_run_prompt,
     };
   }
 
   const yamlBlock = extractYamlBlock(completion.text);
-  const parsed = parseYaml(yamlBlock) ?? [];
-  if (!Array.isArray(parsed)) {
-    throw new Error("LLM did not return a YAML array of decisions");
-  }
+  const parsed = parseYaml(yamlBlock) ?? {};
+  // Back-compat: older prompts returned a bare array of decisions.
+  const decisionsRaw: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { decisions?: unknown[] }).decisions)
+      ? ((parsed as { decisions: unknown[] }).decisions)
+      : [];
+  const questionsRaw: unknown[] = Array.isArray(parsed)
+    ? []
+    : Array.isArray((parsed as { questions?: unknown[] }).questions)
+      ? ((parsed as { questions: unknown[] }).questions)
+      : [];
 
   const now = new Date().toISOString();
-  const decisions: Decision[] = parsed.map((item: unknown) =>
+  const decisions: Decision[] = decisionsRaw.map((item) =>
     DecisionSchema.parse({
       ...(item as object),
       recorded_at: now,
       session: (item as { session?: string }).session ?? input.session_id,
     }),
   );
+  const questions: Question[] = questionsRaw.map((item) =>
+    QuestionSchema.parse({
+      id: randomUUID(),
+      ...(item as object),
+      recorded_at: now,
+      status: "unresolved",
+      session: (item as { session?: string }).session ?? input.session_id,
+    }),
+  );
 
-  return { decisions, raw_yaml: yamlBlock };
+  return { decisions, questions, raw_yaml: yamlBlock };
 }
 
 function renderUserPrompt(input: ExtractDecisionsInput): string {

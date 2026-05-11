@@ -220,6 +220,7 @@ function claudeSettings(cmd: string): unknown {
               command:
                 `${cmd} index --root "$PWD"${silent}; ` +
                 `${cmd} feature clear-active --root "$PWD"${silent}; ` +
+                `${cmd} session start --root "$PWD"${silent}; ` +
                 `${cmd} preferences --root "$PWD" --markdown 2>/dev/null || true`,
             },
           ],
@@ -266,7 +267,12 @@ function claudeSettings(cmd: string): unknown {
               type: "command",
               command:
                 `${cmd} attach --transcript -${silent}; ` +
-                `${cmd} feature attribute --git-diff --root "$PWD"${silent}`,
+                // Gate attribution on a clean index — a stale graph maps touched
+                // files to the wrong symbols and silently pollutes weights.
+                `if ${cmd} validate --quiet --root "$PWD" >/dev/null 2>&1; then ` +
+                `${cmd} feature attribute --git-diff --root "$PWD"${silent}; ` +
+                `fi; ` +
+                `${cmd} session end --root "$PWD"${silent}`,
             },
           ],
         },
