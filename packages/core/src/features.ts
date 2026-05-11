@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
+import { appendFile, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
@@ -71,6 +71,12 @@ export interface SetActiveResult {
   created: boolean;
 }
 
+async function ensureSessionDir(root: string): Promise<void> {
+  const sessionDir = path.dirname(activeFeaturePath(root));
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(sessionDir, ".gitignore"), "*\n");
+}
+
 export async function setActive(root: string, rawLabel: string): Promise<SetActiveResult> {
   const label = normalizeLabel(rawLabel);
   if (!label) throw new Error("Feature label is empty after normalization");
@@ -92,12 +98,63 @@ export async function setActive(root: string, rawLabel: string): Promise<SetActi
   entry.sessions += 1;
   entry.last_active = now;
   await saveFeatures(root, features);
-  const sessionDir = path.dirname(activeFeaturePath(root));
-  await mkdir(sessionDir, { recursive: true });
-  // .dna/session/ is per-session state; never commit it.
-  await writeFile(path.join(sessionDir, ".gitignore"), "*\n");
+  await ensureSessionDir(root);
   await writeFile(activeFeaturePath(root), label);
   return { label, created: !existed };
+}
+
+export interface SwitchActiveResult {
+  label: string;
+  created: boolean;
+  flushed_from?: string;
+  flushed_attribution?: AttributeResult;
+}
+
+/**
+ * Mid-session feature swap. Flushes pending dirty-file attribution to the
+ * previous active feature, then swaps without incrementing `sessions` on the
+ * destination (we're not starting a new session, just re-aiming).
+ */
+export async function switchActive(
+  root: string,
+  rawLabel: string,
+  dirtyFiles: string[],
+): Promise<SwitchActiveResult> {
+  const label = normalizeLabel(rawLabel);
+  if (!label) throw new Error("Feature label is empty after normalization");
+
+  const prev = await getActive(root);
+  let flushed_attribution: AttributeResult | undefined;
+  if (prev && dirtyFiles.length > 0) {
+    const result = await attributeFiles(root, dirtyFiles, "edit", prev);
+    if (result) flushed_attribution = result;
+  }
+
+  const features = await loadFeatures(root);
+  const now = new Date().toISOString();
+  let entry = features.features[label];
+  const created = !entry;
+  if (!entry) {
+    entry = {
+      label,
+      aliases: [],
+      symbols: [],
+      sessions: 0,
+      created_at: now,
+      last_active: now,
+    };
+    features.features[label] = entry;
+  }
+  entry.last_active = now;
+  await saveFeatures(root, features);
+  await ensureSessionDir(root);
+  await writeFile(activeFeaturePath(root), label);
+  return {
+    label,
+    created,
+    flushed_from: prev,
+    flushed_attribution,
+  };
 }
 
 /** Action signal magnitudes for the EWMA update. */
@@ -110,11 +167,31 @@ function ewma(prior: number, signal: number): number {
   return Math.max(0, Math.min(1, next));
 }
 
+export interface AttributeDetail {
+  id: string;
+  file: string;
+  confidence: number;
+  weight: number;
+}
+
 export interface AttributeResult {
   label: string;
   touched_symbols: number;
   matched_files: string[];
   unmatched_files: string[];
+  details: AttributeDetail[];
+  recorded_at: string;
+}
+
+const LAST_ATTRIBUTION_REL = ".dna/session/last-attribution.json";
+const FEATURES_HISTORY_REL = ".dna/features-history.jsonl";
+const HISTORY_TOP_N = 20;
+
+export function lastAttributionPath(root: string): string {
+  return path.join(root, LAST_ATTRIBUTION_REL);
+}
+export function featuresHistoryPath(root: string): string {
+  return path.join(root, FEATURES_HISTORY_REL);
 }
 
 /**
@@ -154,6 +231,8 @@ export async function attributeFiles(
       touched_symbols: 0,
       matched_files: [],
       unmatched_files: files,
+      details: [],
+      recorded_at: new Date().toISOString(),
     };
   }
 
@@ -170,6 +249,7 @@ export async function attributeFiles(
 
   const matched: string[] = [];
   const unmatched: string[] = [];
+  const details: AttributeDetail[] = [];
   let touched = 0;
   const signal = SIGNAL[action];
 
@@ -180,6 +260,7 @@ export async function attributeFiles(
       continue;
     }
     matched.push(file);
+    const confidence = 1 / symbols.length;
     for (const s of symbols) {
       if (!s.id) continue;
       const prior = bySymbolId.get(s.id);
@@ -189,8 +270,10 @@ export async function attributeFiles(
         edits: (prior?.edits ?? 0) + (action === "edit" ? 1 : 0),
         reads: (prior?.reads ?? 0) + (action === "read" ? 1 : 0),
         last_touched: now,
+        last_confidence: confidence,
       };
       bySymbolId.set(s.id, next);
+      details.push({ id: s.id, file, confidence, weight: next.weight });
       touched += 1;
     }
   }
@@ -199,12 +282,192 @@ export async function attributeFiles(
   feature.last_active = now;
   await saveFeatures(root, features);
 
-  return {
+  const result: AttributeResult = {
     label: normalized,
     touched_symbols: touched,
     matched_files: matched,
     unmatched_files: unmatched,
+    details,
+    recorded_at: now,
   };
+
+  await ensureSessionDir(root);
+  await writeFile(lastAttributionPath(root), JSON.stringify(result, null, 2));
+
+  // Append a top-N snapshot for drift detection.
+  const top = feature.symbols.slice(0, HISTORY_TOP_N).map((s) => ({
+    id: s.id,
+    weight: s.weight,
+  }));
+  await appendFile(
+    featuresHistoryPath(root),
+    `${JSON.stringify({ ts: now, label: normalized, action, top })}\n`,
+  );
+
+  await appendSessionEventIfActive(root, {
+    type: "attribution",
+    ts: now,
+    label: normalized,
+    touched_symbols: touched,
+    matched_files: matched.length,
+    low_confidence: details.filter((d) => d.confidence < 0.3).length,
+  });
+
+  return result;
+}
+
+export async function readLastAttribution(
+  root: string,
+): Promise<AttributeResult | undefined> {
+  try {
+    const raw = await readFile(lastAttributionPath(root), "utf8");
+    return JSON.parse(raw) as AttributeResult;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface GcCandidate {
+  id: string;
+  weight: number;
+}
+export interface GcResult {
+  label: string;
+  threshold: number;
+  dry_run: boolean;
+  pruned: GcCandidate[];
+  remaining: number;
+}
+
+export async function gcFeature(
+  root: string,
+  label: string,
+  opts: { threshold?: number; dryRun?: boolean } = {},
+): Promise<GcResult | undefined> {
+  const threshold = opts.threshold ?? 0.05;
+  const dryRun = opts.dryRun ?? false;
+  const normalized = normalizeLabel(label);
+  const features = await loadFeatures(root);
+  const feature = features.features[normalized];
+  if (!feature) return undefined;
+  const pruned: GcCandidate[] = [];
+  const remaining: FeatureSymbol[] = [];
+  for (const s of feature.symbols) {
+    if (s.weight < threshold) pruned.push({ id: s.id, weight: s.weight });
+    else remaining.push(s);
+  }
+  if (!dryRun && pruned.length > 0) {
+    feature.symbols = remaining;
+    await saveFeatures(root, features);
+  }
+  return {
+    label: normalized,
+    threshold,
+    dry_run: dryRun,
+    pruned,
+    remaining: remaining.length,
+  };
+}
+
+export interface FeatureDiffEntry {
+  id: string;
+  weight_then?: number;
+  weight_now?: number;
+  change: "entered" | "left" | "weight";
+}
+
+export interface FeatureDiffResult {
+  label: string;
+  since: string;
+  baseline_ts?: string;
+  entries: FeatureDiffEntry[];
+}
+
+/**
+ * Reads .dna/features-history.jsonl, finds the first snapshot of `label` at-or-after
+ * `sinceISO`, and diffs its top-N against the current top-N. If no snapshot is
+ * found, the baseline is empty and every current symbol counts as "entered".
+ */
+export async function featureDiff(
+  root: string,
+  label: string,
+  sinceISO: string,
+): Promise<FeatureDiffResult | undefined> {
+  const normalized = normalizeLabel(label);
+  const features = await loadFeatures(root);
+  const feature = features.features[normalized];
+  if (!feature) return undefined;
+
+  // Baseline = latest snapshot at-or-before sinceISO (state "as of" that date).
+  // If none, baseline is empty and every current symbol counts as "entered".
+  let baseline: Array<{ id: string; weight: number }> = [];
+  let baseline_ts: string | undefined;
+  try {
+    const raw = await readFile(featuresHistoryPath(root), "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const snap = JSON.parse(line) as {
+          ts: string;
+          label: string;
+          top: Array<{ id: string; weight: number }>;
+        };
+        if (snap.label !== normalized) continue;
+        if (snap.ts <= sinceISO) {
+          baseline = snap.top;
+          baseline_ts = snap.ts;
+        }
+      } catch {
+        /* skip malformed line */
+      }
+    }
+  } catch {
+    /* no history yet */
+  }
+
+  const thenById = new Map(baseline.map((s) => [s.id, s.weight]));
+  const nowById = new Map(
+    feature.symbols.slice(0, HISTORY_TOP_N).map((s) => [s.id, s.weight]),
+  );
+
+  const entries: FeatureDiffEntry[] = [];
+  for (const [id, weight_now] of nowById) {
+    const weight_then = thenById.get(id);
+    if (weight_then === undefined) {
+      entries.push({ id, weight_now, change: "entered" });
+    } else if (Math.abs(weight_now - weight_then) > 0.05) {
+      entries.push({ id, weight_then, weight_now, change: "weight" });
+    }
+  }
+  for (const [id, weight_then] of thenById) {
+    if (!nowById.has(id)) entries.push({ id, weight_then, change: "left" });
+  }
+
+  return { label: normalized, since: sinceISO, baseline_ts, entries };
+}
+
+/**
+ * Append a session event if a `.dna/session/id` file exists. No-op otherwise.
+ * Kept here to colocate with attributeFiles; observer.ts has its own variant.
+ */
+export async function appendSessionEventIfActive(
+  root: string,
+  event: Record<string, unknown>,
+): Promise<void> {
+  let id: string | undefined;
+  try {
+    id = (await readFile(path.join(root, ".dna/session/id"), "utf8")).trim();
+  } catch {
+    return;
+  }
+  if (!id) return;
+  const dir = path.join(root, ".dna/sessions");
+  try {
+    await mkdir(dir, { recursive: true });
+    await appendFile(path.join(dir, `${id}.jsonl`), `${JSON.stringify(event)}\n`);
+  } catch {
+    /* best-effort */
+  }
 }
 
 export interface TopSymbol {

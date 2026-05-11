@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { appendFile, readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -66,16 +66,43 @@ export async function recordObservation(
 ): Promise<void> {
   if (!symbol) return; // observer is only useful for symbol-scoped calls
   const store = await readStore(root);
+  const now = new Date().toISOString();
   const entry = store.symbols[symbol] ?? {
     count: 0,
     last_queried: new Date(0).toISOString(),
     tools: {},
   };
   entry.count++;
-  entry.last_queried = new Date().toISOString();
+  entry.last_queried = now;
   entry.tools[tool] = (entry.tools[tool] ?? 0) + 1;
   store.symbols[symbol] = entry;
   await writeStore(root, store);
+  await appendSessionEvent(root, { type: "query", ts: now, symbol, tool });
+}
+
+/**
+ * Append a session event if `.dna/session/id` exists; no-op otherwise. We
+ * keep this here (and in features.ts) instead of cross-importing because both
+ * modules need to write to the session log without depending on each other.
+ */
+async function appendSessionEvent(
+  root: string,
+  event: Record<string, unknown>,
+): Promise<void> {
+  let id: string;
+  try {
+    id = (await readFile(path.join(root, ".dna/session/id"), "utf8")).trim();
+  } catch {
+    return;
+  }
+  if (!id) return;
+  const dir = path.join(root, ".dna/sessions");
+  try {
+    await mkdir(dir, { recursive: true });
+    await appendFile(path.join(dir, `${id}.jsonl`), `${JSON.stringify(event)}\n`);
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function readObservations(root: string): Promise<ObservationStore> {
@@ -84,15 +111,17 @@ export async function readObservations(root: string): Promise<ObservationStore> 
 
 export async function recordPrepared(root: string, symbol: string): Promise<void> {
   const store = await readStore(root);
+  const now = new Date().toISOString();
   const entry = store.symbols[symbol] ?? {
     count: 0,
     last_queried: new Date(0).toISOString(),
     tools: {},
   };
-  entry.last_prepared = new Date().toISOString();
+  entry.last_prepared = now;
   store.symbols[symbol] = entry;
   store.last_prepared_symbol = symbol;
   await writeStore(root, store);
+  await appendSessionEvent(root, { type: "prepare", ts: now, symbol });
 }
 
 export async function recordFailure(

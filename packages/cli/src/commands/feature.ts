@@ -5,12 +5,16 @@ import kleur from "kleur";
 import {
   attributeFiles,
   clearActive,
+  featureDiff,
+  gcFeature,
   getActive,
   loadFeatures,
   mergeFeatures,
   normalizeLabel,
+  readLastAttribution,
   renameFeature,
   setActive,
+  switchActive,
   topSymbols,
 } from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
@@ -220,6 +224,148 @@ export function registerFeature(program: Command): void {
       return;
     }
     if (label) console.log(label);
+  });
+
+  addRootOption(
+    feature
+      .command("switch <label...>")
+      .description("Mid-session swap: flush dirty-file attribution to the prev feature, then aim at <label>")
+      .option("--json", "Emit JSON"),
+  ).action(async (label: string[], opts: UseOpts) => {
+    const root = resolveRoot(opts);
+    const raw = label.join(" ");
+    const dirty = await touchedFilesFromGit(root);
+    const result = await switchActive(root, raw, dirty);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.flushed_attribution) {
+      const a = result.flushed_attribution;
+      console.log(
+        kleur.dim(
+          `flushed ${a.touched_symbols} symbols to ${a.label} before switch (${a.matched_files.length} files)`,
+        ),
+      );
+    }
+    const verb = result.created ? "created" : "switched to";
+    console.log(`${kleur.green(verb)} feature ${kleur.bold(result.label)}`);
+  });
+
+  addRootOption(
+    feature
+      .command("gc [label]")
+      .description("Prune low-weight symbols from a feature bag (or all if omitted)")
+      .option("--threshold <n>", "Weight below which symbols are pruned", (v) => parseFloat(v), 0.05)
+      .option("--dry-run", "Show what would be pruned without writing")
+      .option("--json", "Emit JSON"),
+  ).action(
+    async (
+      label: string | undefined,
+      opts: RootOption & { threshold: number; dryRun?: boolean; json?: boolean },
+    ) => {
+      const root = resolveRoot(opts);
+      const labels: string[] = label
+        ? [label]
+        : Object.keys((await loadFeatures(root)).features);
+      const results = [];
+      for (const l of labels) {
+        const r = await gcFeature(root, l, {
+          threshold: opts.threshold,
+          dryRun: opts.dryRun,
+        });
+        if (r) results.push(r);
+      }
+      if (opts.json) {
+        console.log(JSON.stringify({ results }, null, 2));
+        return;
+      }
+      if (results.length === 0) {
+        console.log(kleur.dim("no features to gc"));
+        return;
+      }
+      for (const r of results) {
+        const verb = opts.dryRun ? "would prune" : "pruned";
+        console.log(
+          `${kleur.bold(r.label)}: ${verb} ${r.pruned.length} below ${r.threshold} ${kleur.dim(`(${r.remaining} remain)`)}`,
+        );
+        for (const p of r.pruned.slice(0, 10)) {
+          console.log(`  ${kleur.dim(p.weight.toFixed(3))}  ${p.id}`);
+        }
+        if (r.pruned.length > 10) {
+          console.log(kleur.dim(`  … ${r.pruned.length - 10} more`));
+        }
+      }
+    },
+  );
+
+  const attribution = feature
+    .command("attribution")
+    .description("Inspect the last attribution write");
+  addRootOption(
+    attribution
+      .command("last", { isDefault: true })
+      .description("Print the last attribution result with per-symbol confidence")
+      .option("--json", "Emit JSON"),
+  ).action(async (opts: RootOption & { json?: boolean }) => {
+    const root = resolveRoot(opts);
+    const last = await readLastAttribution(root);
+    if (opts.json) {
+      console.log(JSON.stringify(last ?? null, null, 2));
+      return;
+    }
+    if (!last) {
+      console.log(kleur.dim("no attribution recorded yet"));
+      return;
+    }
+    console.log(
+      `${kleur.bold(last.label)}: ${last.touched_symbols} symbols attributed ${kleur.dim(`(${last.matched_files.length} files matched)`)}`,
+    );
+    const sorted = [...last.details].sort((a, b) => b.confidence - a.confidence);
+    for (const d of sorted) {
+      const c = d.confidence;
+      const marker = c >= 0.5 ? kleur.green("✓") : c >= 0.3 ? kleur.yellow("?") : kleur.red("✗");
+      console.log(`  ${marker} ${d.id} ${kleur.dim(`(${c.toFixed(2)} confidence, weight ${d.weight.toFixed(2)})`)}`);
+    }
+  });
+
+  addRootOption(
+    feature
+      .command("diff <label>")
+      .description("Show how a feature's top-N symbols have shifted since a date")
+      .requiredOption("--since <iso>", "Baseline date (ISO-8601)")
+      .option("--json", "Emit JSON"),
+  ).action(async (label: string, opts: RootOption & { since: string; json?: boolean }) => {
+    const root = resolveRoot(opts);
+    const result = await featureDiff(root, label, opts.since);
+    if (opts.json) {
+      console.log(JSON.stringify(result ?? null, null, 2));
+      return;
+    }
+    if (!result) {
+      console.log(kleur.yellow(`no feature named ${label}`));
+      return;
+    }
+    if (result.entries.length === 0) {
+      console.log(kleur.dim(`no drift in ${result.label} since ${opts.since}`));
+      return;
+    }
+    console.log(
+      kleur.bold(`drift in ${result.label} since ${opts.since}`) +
+        (result.baseline_ts ? kleur.dim(` (baseline ${result.baseline_ts})`) : kleur.dim(" (no baseline — first run)")),
+    );
+    for (const e of result.entries) {
+      if (e.change === "entered") {
+        console.log(`  ${kleur.green("+")} ${e.id} ${kleur.dim(`weight ${e.weight_now?.toFixed(2)}`)}`);
+      } else if (e.change === "left") {
+        console.log(`  ${kleur.red("-")} ${e.id} ${kleur.dim(`was ${e.weight_then?.toFixed(2)}`)}`);
+      } else {
+        const arrow = (e.weight_now ?? 0) > (e.weight_then ?? 0) ? "↑" : "↓";
+        console.log(
+          `  ${kleur.yellow(arrow)} ${e.id} ${kleur.dim(`${e.weight_then?.toFixed(2)} → ${e.weight_now?.toFixed(2)}`)}`,
+        );
+      }
+    }
   });
 }
 

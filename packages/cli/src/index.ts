@@ -29,6 +29,11 @@ import { registerPrefer } from "./commands/prefer.js";
 import { registerPreferences } from "./commands/preferences.js";
 import { registerCapturePreference } from "./commands/capture-preference.js";
 import { registerFeature } from "./commands/feature.js";
+import { registerValidate } from "./commands/validate.js";
+import { registerAsk } from "./commands/ask.js";
+import { registerQuestions } from "./commands/questions.js";
+import { registerSession } from "./commands/session.js";
+import { registerWhy } from "./commands/why.js";
 
 const program = new Command()
   .name("dna")
@@ -64,6 +69,11 @@ registerServe(program);
 registerBench(program);
 registerContextFromPrompt(program);
 registerRecordFailure(program);
+registerValidate(program);
+registerAsk(program);
+registerQuestions(program);
+registerSession(program);
+registerWhy(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);

@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import kleur from "kleur";
 import { stringify as stringifyYaml } from "yaml";
-import { appendDecision } from "@invariance/dna-core";
+import { appendDecision, appendQuestion } from "@invariance/dna-core";
 import { DnaLlm, extractDecisions } from "@invariance/dna-llm";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
@@ -91,31 +91,49 @@ export function registerAttach(program: Command): void {
         return;
       }
 
-      if (result.decisions.length === 0) {
-        console.log(kleur.dim("no decisions extracted from this transcript"));
+      if (result.decisions.length === 0 && result.questions.length === 0) {
+        console.log(kleur.dim("no decisions or questions extracted from this transcript"));
         return;
       }
 
-      console.log(
-        kleur.bold(`${result.decisions.length} decision(s) extracted:`),
-      );
-      console.log("");
-      console.log("```yaml");
-      console.log(stringifyYaml(result.decisions).trimEnd());
-      console.log("```");
-      console.log("");
+      if (result.decisions.length > 0) {
+        console.log(kleur.bold(`${result.decisions.length} decision(s) extracted:`));
+        console.log("");
+        console.log("```yaml");
+        console.log(stringifyYaml(result.decisions).trimEnd());
+        console.log("```");
+        console.log("");
+      }
+      if (result.questions.length > 0) {
+        console.log(kleur.bold(`${result.questions.length} open question(s) extracted:`));
+        console.log("");
+        console.log("```yaml");
+        console.log(stringifyYaml(result.questions).trimEnd());
+        console.log("```");
+        console.log("");
+      }
 
       if (opts.saveWithoutConfirm) {
         for (const d of result.decisions) {
           await appendDecision(root, d);
         }
+        for (const q of result.questions) {
+          await appendQuestion(root, {
+            symbol: q.symbol,
+            question: q.question,
+            asked_by: q.asked_by,
+            session: q.session,
+          });
+        }
         console.log(
-          kleur.green(`wrote ${result.decisions.length} decision(s) to .dna/decisions/`),
+          kleur.green(
+            `wrote ${result.decisions.length} decision(s) and ${result.questions.length} question(s) to .dna/`,
+          ),
         );
       } else {
         console.log(
           kleur.dim(
-            "Run again with --save-without-confirm to persist to .dna/decisions/, or copy YAML manually.",
+            "Run again with --save-without-confirm to persist to .dna/, or copy YAML manually.",
           ),
         );
       }

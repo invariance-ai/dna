@@ -2,8 +2,9 @@ import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
+import { utimes } from "node:fs/promises";
 import { parseFile } from "./parser.js";
-import { buildIndex, writeIndex } from "./index_store.js";
+import { buildIndex, writeIndex, staleFiles } from "./index_store.js";
 import { open, getContext, impactOf, resolveSymbol } from "./query.js";
 
 const roots: string[] = [];
@@ -118,5 +119,29 @@ describe("index graph", () => {
       "createRefund",
       "supportRefundWorkflow",
     ]);
+  });
+});
+
+describe("staleFiles", () => {
+  it("flags files whose mtime is newer than the index built_at and notes missing files", async () => {
+    const root = await tempRepo();
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src/a.ts"), "export const a = 1;\n");
+    await writeFile(path.join(root, "src/b.ts"), "export const b = 1;\n");
+    const parsed = await Promise.all([
+      parseFile(path.join(root, "src/a.ts")),
+      parseFile(path.join(root, "src/b.ts")),
+    ]);
+    const index = buildIndex(root, parsed);
+    await writeIndex(root, index);
+
+    // Make a.ts newer than the index, delete b.ts.
+    const future = new Date(Date.now() + 60_000);
+    await utimes(path.join(root, "src/a.ts"), future, future);
+    await rm(path.join(root, "src/b.ts"));
+
+    const report = await staleFiles(root, index);
+    expect(report.stale_files).toContain("src/a.ts");
+    expect(report.missing_files).toContain("src/b.ts");
   });
 });
