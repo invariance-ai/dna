@@ -132,8 +132,31 @@ export const FeatureSymbol = z.object({
   edits: z.number().int().nonnegative().default(0),
   reads: z.number().int().nonnegative().default(0),
   last_touched: z.string(),
+  /**
+   * Confidence of the most recent attribution: 1 / number_of_symbols_in_file.
+   * Low values mean the file is a shared utility — the weight bump is noisy.
+   */
+  last_confidence: z.number().min(0).max(1).optional(),
 });
 export type FeatureSymbol = z.infer<typeof FeatureSymbol>;
+
+/* ---------- Questions (v0.5) ---------- */
+
+export const QuestionStatus = z.enum(["unresolved", "resolved", "wontfix"]);
+export type QuestionStatus = z.infer<typeof QuestionStatus>;
+
+export const Question = z.object({
+  id: z.string(),
+  symbol: z.string(),
+  question: z.string(),
+  asked_by: z.string().optional(),
+  session: z.string().optional(),
+  status: QuestionStatus.default("unresolved"),
+  resolution: z.string().optional(),
+  recorded_at: z.string(),
+  resolved_at: z.string().optional(),
+});
+export type Question = z.infer<typeof Question>;
 
 export const Feature = z.object({
   label: z.string(),

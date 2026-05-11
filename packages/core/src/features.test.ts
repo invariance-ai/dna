@@ -5,13 +5,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   attributeFiles,
   clearActive,
+  featureDiff,
+  gcFeature,
   getActive,
   loadFeatures,
   matchFeaturesInPrompt,
   mergeFeatures,
   normalizeLabel,
+  readLastAttribution,
   renameFeature,
   setActive,
+  switchActive,
   topSymbols,
 } from "./features.js";
 import { writeIndex, type DnaIndex } from "./index_store.js";
@@ -177,6 +181,84 @@ describe("matchFeaturesInPrompt", () => {
     expect(matchFeaturesInPrompt("LANDING animation tweak", features)).toEqual(["homepage"]);
     // word-bounded: don't match inside another word
     expect(matchFeaturesInPrompt("homepageless variant", features)).toEqual([]);
+  });
+});
+
+describe("switchActive", () => {
+  it("flushes dirty-file attribution to the previous feature, then swaps without bumping sessions", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    expect((await loadFeatures(root)).features["homepage"]?.sessions).toBe(1);
+
+    const r = await switchActive(root, "auth", ["src/Home.tsx"]);
+    expect(r.flushed_from).toBe("homepage");
+    expect(r.flushed_attribution?.touched_symbols).toBe(1);
+    expect(await getActive(root)).toBe("auth");
+
+    const features = await loadFeatures(root);
+    // sessions on destination NOT bumped (no setActive call).
+    expect(features.features["auth"]?.sessions).toBe(0);
+    // homepage retained the flushed work.
+    const home = (await topSymbols(root, "homepage", 5))[0];
+    expect(home?.id).toContain("HomeComponent");
+    expect(home?.weight).toBeGreaterThan(0);
+  });
+
+  it("creates the destination feature if missing", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    const r = await switchActive(root, "brand-new", []);
+    expect(r.created).toBe(true);
+    expect(r.flushed_attribution).toBeUndefined(); // empty dirty list, so no flush
+    expect(await getActive(root)).toBe("brand-new");
+  });
+});
+
+describe("gcFeature", () => {
+  it("dry-run lists below-threshold without writing", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    await attributeFiles(root, ["src/Home.tsx"], "read"); // small weight bump
+    const dry = await gcFeature(root, "homepage", { threshold: 0.5, dryRun: true });
+    expect(dry?.pruned.length).toBe(1);
+    expect((await loadFeatures(root)).features["homepage"]?.symbols.length).toBe(1);
+  });
+
+  it("non-dry prunes from disk", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    await attributeFiles(root, ["src/Home.tsx"], "read");
+    await gcFeature(root, "homepage", { threshold: 0.5 });
+    expect((await loadFeatures(root)).features["homepage"]?.symbols.length).toBe(0);
+  });
+});
+
+describe("attribution confidence + last attribution sidecar", () => {
+  it("computes 1/symbols_in_file and writes a session sidecar", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    await attributeFiles(root, ["src/Home.tsx"], "edit");
+    const last = await readLastAttribution(root);
+    expect(last?.details.length).toBe(1);
+    expect(last?.details[0]?.confidence).toBeCloseTo(1, 5);
+  });
+});
+
+describe("featureDiff", () => {
+  it("flags entries that weren't in the baseline snapshot", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+    await setActive(root, "homepage");
+    const baselineTs = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 5));
+    await attributeFiles(root, ["src/Home.tsx"], "edit");
+    const diff = await featureDiff(root, "homepage", baselineTs);
+    expect(diff?.entries.some((e) => e.change === "entered")).toBe(true);
   });
 });
 
