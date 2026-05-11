@@ -1,16 +1,17 @@
 import type { Command } from "commander";
 import kleur from "kleur";
 import { getContext, formatContextPretty, formatContextMarkdown } from "@invariance/dna-core";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerContext(program: Command): void {
-  program
+  addRootOption(program
     .command("context <symbol>")
     .description("Full multi-strand context for a symbol")
     .option("--json", "Emit JSON (best for tool chaining)")
     .option("--markdown", "Emit markdown (best for piping into an LLM)")
-    .option("--depth <n>", "Caller/callee depth", (v) => parseInt(v, 10), 2)
-    .action(async (symbol: string, opts: { json?: boolean; markdown?: boolean; depth: number }) => {
-      const root = process.cwd();
+    .option("--depth <n>", "Caller/callee depth", (v) => parseInt(v, 10), 2))
+    .action(async (symbol: string, opts: RootOption & { json?: boolean; markdown?: boolean; depth: number }) => {
+      const root = resolveRoot(opts);
       try {
         const r = await getContext({ symbol, depth: opts.depth, strands: ["structural", "tests", "provenance", "invariants"] }, root);
         if (opts.json) console.log(JSON.stringify(r, null, 2));

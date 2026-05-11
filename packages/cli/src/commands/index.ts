@@ -7,14 +7,14 @@ import {
   buildIndex,
   writeIndex,
 } from "@invariance/dna-core";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerIndex(program: Command): void {
-  program
+  addRootOption(program
     .command("index")
-    .description("Scan repo, build symbol graph, write .dna/index/symbols.json")
-    .option("--root <path>", "Repo root (default: cwd)")
-    .action(async (opts: { root?: string }) => {
-      const root = opts.root ?? process.cwd();
+    .description("Scan repo, build symbol graph, write .dna/index/symbols.json"))
+    .action(async (opts: RootOption) => {
+      const root = resolveRoot(opts);
       const t0 = Date.now();
       const config = await loadConfig(root);
       const files = await scanFiles(root, config);

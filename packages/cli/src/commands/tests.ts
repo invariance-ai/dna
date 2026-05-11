@@ -6,14 +6,15 @@ import {
   testsForSymbol,
   formatTestsPretty,
 } from "@invariance/dna-core";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerTests(program: Command): void {
-  program
+  addRootOption(program
     .command("tests <symbol>")
     .description("Tests likely to cover a symbol — what to run after editing")
-    .option("--json", "Emit JSON instead of pretty output")
-    .action(async (symbol: string, opts: { json?: boolean }) => {
-      const root = process.cwd();
+    .option("--json", "Emit JSON instead of pretty output"))
+    .action(async (symbol: string, opts: RootOption & { json?: boolean }) => {
+      const root = resolveRoot(opts);
       try {
         const ctx = await openQuery(root);
         const sym = resolveSymbol(symbol, ctx);

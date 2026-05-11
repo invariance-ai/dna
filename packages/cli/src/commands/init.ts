@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import path from "node:path";
 import kleur from "kleur";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 const CONFIG = `languages: [typescript, python]
 exclude:
@@ -35,12 +36,12 @@ const INVARIANTS = `# .dna/invariants.yml — declarative constraints for symbol
 `;
 
 export function registerInit(program: Command): void {
-  program
+  addRootOption(program
     .command("init")
     .description("Initialize .dna/ in this directory (config + invariants)")
-    .option("--force", "Overwrite existing files")
-    .action(async (opts: { force?: boolean }) => {
-      const root = process.cwd();
+    .option("--force", "Overwrite existing files"))
+    .action(async (opts: RootOption & { force?: boolean }) => {
+      const root = resolveRoot(opts);
       const dnaDir = path.join(root, ".dna");
       await mkdir(dnaDir, { recursive: true });
 

@@ -59,6 +59,14 @@ export function formatContextMarkdown(r: ContextResult): string {
     }
     L.push("");
   }
+  if (r.notes.length) {
+    L.push("## Notes from previous edits");
+    for (const n of r.notes) {
+      L.push(`- **[${n.severity}]** ${n.lesson}`);
+      if (n.evidence) L.push(`  - evidence: ${n.evidence}`);
+    }
+    L.push("");
+  }
   if (r.provenance.length) {
     L.push("## Recent changes");
     for (const p of r.provenance.slice(0, 5))
@@ -120,6 +128,14 @@ export function formatContextPretty(r: ContextResult): string {
       L.push(`  - ${c.cyan(inv.name)} ${c.dim(`[${inv.severity}]`)}`);
       L.push(`    ${inv.rule}`);
       if (inv.evidence.length) L.push(c.dim(`    evidence: ${inv.evidence.join(", ")}`));
+    }
+    L.push("");
+  }
+  if (r.notes.length) {
+    L.push(c.bold("Notes from previous edits:"));
+    for (const n of r.notes) {
+      L.push(`  - ${c.dim(`[${n.severity}]`)} ${n.lesson}`);
+      if (n.evidence) L.push(c.dim(`    evidence: ${n.evidence}`));
     }
     L.push("");
   }

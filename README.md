@@ -1,24 +1,41 @@
 # dna
 
-> Codebase context for coding agents.
+> The repo that gets smarter every time you use it.
 
-`dna` gives Claude Code, Codex, Cursor — any coding agent — a compact, evidence-backed map of your repo before it changes code. Symbols, callers and callees, tests that protect each function, recent git history, and **declarative invariants you author once** (e.g. "refunds over $1000 require finance approval"). Two surfaces, same backend: an **MCP server** for agents that call tools natively, and a **CLI** for agents that shell out via Bash (or for humans inspecting the same data). Backed by a single shared schema, so the surfaces cannot drift.
+`dna` is **organizational memory with a code interface**. It gives Claude Code, Codex, Cursor — any coding agent — a compact, evidence-backed map of your repo before it changes code: symbols, callers and callees, tests that protect each function, recent git history, declarative invariants you author once ("refunds over $1000 require finance approval"), and **lessons learned from previous edits** that agents and humans persist as they go.
 
-The thesis: structural call-graph context is now commodity (Sourcegraph, Aider repomap, Sverklo, CodeGraph, and ~8 other MCP servers all ship it). What still isn't is **invariants as a first-class agent-callable strand** — declarative rules with evidence pointers that say *what an agent must not break* before it touches a symbol. Pair that with a one-shot `prepare_edit` brief that combines structure + tests + invariants + risk, and the agent gets a decision-ready bundle, not a pile of chunks. That's the wedge `dna` is built around.
+Three inputs compound on a single symbol graph:
+1. **Static structure** — calls, callers, tests, provenance (the spine)
+2. **Human intent** — notes, decisions, invariants (what's worth knowing)
+3. **Agent behavior** *(v0.3)* — what they asked, what they broke (the signal)
+
+Day one, dna is useful for context. Six months in, the notes-and-invariants layer is an asset every new engineer and every new agent depends on. Operational reality, encoded and made queryable. That's the thesis.
+
+## Why this works where giant `CLAUDE.md` files don't
+
+| Approach | KB size 10k | 50k | 200k |
+|---|---|---|---|
+| Global `CLAUDE.md` (always loaded) | 10k tok/turn | 50k tok/turn | impossible |
+| Vector RAG over KB | 3-5k tok/turn | 3-5k tok/turn | lossy |
+| **dna (anchored to symbols)** | **~300 tok/turn** | **~400 tok/turn** | **~600 tok/turn** |
+
+dna only surfaces the slice attached to the symbol being edited. The graph does the retrieval; vectors aren't needed.
 
 ## Quickstart
 
 ```bash
 npm install -g @invariance/dna
 cd your-repo
-dna init        # writes .dna/config.yml + .dna/invariants.yml
-dna index       # builds the symbol graph (one JSON file under .dna/index/)
-claude mcp add dna -- dna serve   # expose to Claude Code
+dna init                              # writes .dna/config.yml + .dna/invariants.yml
+dna index                             # builds the symbol graph (.dna/index/symbols.json)
+dna learn-todos                       # bootstrap notes from existing TODO/FIXME comments
+claude mcp add dna -- dna serve       # expose to Claude Code
 ```
 
 ## CLI
 
 ```bash
+# Reading
 dna prepare <symbol> --intent "what you'll change"   # ⭐ decision-ready brief
 dna context <symbol>                                  # multi-strand context
 dna impact <symbol>                                   # blast radius
@@ -26,31 +43,39 @@ dna tests <symbol>                                    # tests that protect it
 dna invariants <symbol>                               # rules that apply
 dna find "<query>"                                    # fuzzy symbol search
 dna trace <symbol>                                    # git provenance
+
+# Writing — anchored memory
+dna learn <symbol> --lesson "..." [--severity low|medium|high] [--evidence <ref>]
+dna notes <symbol>                                    # what previous edits left behind
+dna learn-todos                                       # one-shot: lift TODO/FIXME into notes
+
+# Server
 dna index --watch                                     # rebuild on changes
 dna serve                                             # MCP stdio server
 ```
 
-All commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when stdout isn't a TTY, so piped output is clean.
+All read commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when piped.
 
 ## For agents shelling out
 
-Claude Code and Codex agents already have Bash. Tell them about `dna` and they can use it without any MCP wiring:
+Claude Code and Codex agents already have Bash — they can use dna without any MCP wiring. Add to `CLAUDE.md`:
 
 ```text
 You have access to `dna`, a CLI that returns structured repo context.
+
 Before editing any non-trivial symbol, run:
   dna prepare <symbol> --intent "<one-line description>"
 
-To check what tests to run after:
-  dna tests <symbol> --json
+After a successful change that taught you something non-obvious, run:
+  dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
 
-To find existing helpers before adding new ones:
-  dna find "<keyword>" --json
+To check what tests to run after editing:
+  dna tests <symbol> --json
 ```
 
 The MCP server (`dna serve`) is the same code path — pick whichever surface the agent works best in.
 
-## What you get
+## Anchored memory in action
 
 ```text
 $ dna prepare createRefund --intent "add $5000 cap for non-enterprise"
@@ -74,15 +99,24 @@ $ dna prepare createRefund --intent "add $5000 cap for non-enterprise"
   Refunds over 1000 require finance_approval_id.
   evidence: docs/refund-policy.md
 
+## Notes from previous edits
+- **[high]** amount validation must happen before currency conversion
+  - evidence: PR-1287
+- **[medium]** wrap stripe.refunds.create in withRetry — flaky on Mondays
+  - evidence: incident-2026-04-22
+
 ## Recent changes
 - `a3f2c11` 2026-05-04 alex: added idempotency_key arg
 ```
 
+The agent doesn't have to re-discover any of this. The lessons came from previous edits — recorded once, surfaced forever, only when relevant.
+
 ## Invariants
 
-`dna` is the only OSS tool in its category that surfaces **author-defined invariants** alongside structural context. Drop a `.dna/invariants.yml` in your repo:
+`dna` is the only OSS tool in its category that surfaces **author-defined invariants** alongside structural context.
 
 ```yaml
+# .dna/invariants.yml
 - name: High-value refunds require approval
   applies_to:
     - createRefund
@@ -93,39 +127,44 @@ $ dna prepare createRefund --intent "add $5000 cap for non-enterprise"
   severity: block
 ```
 
-When an agent calls `invariants_for("createRefund")` mid-task, it receives this rule with its evidence link, before it edits. Semgrep and CodeQL can match patterns, but they're security-first and not PM-authored. A YAML file with a rule, a link to the policy doc, and `severity: block` is a different artifact — one an LLM cannot reconstruct from a tree-sitter pass.
+Semgrep and CodeQL can match patterns, but they're security-first and not PM-authored. A YAML file with a rule, a link to the policy doc, and `severity: block` is a different artifact — one an LLM cannot reconstruct from a tree-sitter pass.
+
+## Notes vs Invariants vs Decisions
+
+Three artifact types, one symbol anchor:
+
+| Artifact | Shape | Authored by | Promoted to |
+|---|---|---|---|
+| **Note** | a general lesson | anyone (agent, human, doc, TODO) | invariant (when patterns recur) |
+| **Invariant** | a rule that must hold | PM / eng lead | — |
+| **Decision** *(v0.4)* | a choice with rejected alternative | LLM-distilled from sessions/PRs | — |
+
+Notes "deflate" over time — recurring ones get promoted to invariants, and dna stops surfacing the note (the invariant strand picks it up instead). That's the asset-building mechanic.
 
 ## How it compares
 
-| Tool | Delivery | Approach | Returns | Invariants? | License |
-|---|---|---|---|---|---|
-| **dna** | MCP + CLI | tree-sitter graph + git + tests + invariants | Structured brief: structure / tests / invariants / risk | **✅ first-class** | MIT |
-| Sverklo MCP | MCP + CLI | tree-sitter + BM25 + ONNX + PageRank | Ranked chunks + symbols | ❌ | MIT |
-| CodeGraph | MCP | tree-sitter + SQLite + FTS | Callers, callees, impact, routes | ❌ | OSS |
-| CodeGraphContext | MCP + CLI | tree-sitter + Neo4j/FalkorDB, 15 langs | Callers, callees, complexity | ❌ | OSS |
-| code-graph-mcp | MCP | tree-sitter + SQLite + vec, RRF | Call graph, routes, impact, dead code | ❌ | OSS |
-| Aider repomap | aider only | tree-sitter + PageRank | Token-budgeted symbol map | ❌ | Apache-2 |
-| Sourcegraph Cody | IDE + MCP | LSIF/SCIP graph + remote search | Files, symbols, refs | ❌ | Commercial |
-| Continue.dev | IDE plugin + MCP | embeddings + tree-sitter + SQL FTS | Chunks + repo map | ❌ | Apache-2 |
-| Greptile | SaaS + API | Graph index, Claude Agent SDK reviews | Review comments | ❌ | $20-30/seat/mo |
-| Nia / Nozomio | Hosted MCP | Vector RAG over repos + 3000+ packages | Chunks + doc passages | ❌ | Commercial (YC S25) |
-| Cursor index | IDE-internal | AST → embeddings → Turbopuffer | Chunks injected into prompt | ❌ | Closed |
-| Probe | MCP + CLI | ripgrep + tree-sitter | Whole AST blocks | ❌ | Apache-2 |
-| Repo Prompt | Mac app + MCP | tree-sitter "Code Maps" | Token-optimized bundles | ❌ | Commercial |
-| Semgrep | CLI + Skill | AST pattern rules | Rule findings | Pattern-based (security) | OSS + commercial |
-| CodeQL | CLI + MCP wrappers | Semantic DB + QL queries | Dataflow paths | Pattern-based (security) | Free for OSS |
+| Tool | Returns | Notes / memory? | Invariants? | License |
+|---|---|---|---|---|
+| **dna** | Decision brief: structure + tests + invariants + **notes** + risk | **✅ anchored to symbols** | **✅ first-class** | MIT |
+| Sverklo MCP | Ranked chunks + symbols | ❌ | ❌ | MIT |
+| CodeGraph / CodeGraphContext / code-graph-mcp | Callers, callees, impact | ❌ | ❌ | OSS |
+| Aider repomap | Token-budgeted symbol map | ❌ | ❌ | Apache-2 |
+| Sourcegraph Cody | Files, symbols, refs | ❌ | ❌ | Commercial |
+| Continue.dev | Chunks + repo map | ❌ | ❌ | Apache-2 |
+| Greptile | Review comments | ❌ | ❌ | $20-30/seat |
+| Nia / Nozomio | Vector chunks + 3000 packages | ❌ | ❌ | YC S25 |
+| Cursor index | Embedded chunks | ❌ | ❌ | Closed |
+| Semgrep / CodeQL | Pattern findings | ❌ | Pattern-based (security) | Mixed |
 
-**Where `dna` wins:** evidence-backed, agent-callable invariants that a PM can author in YAML; one-shot `prepare_edit` bundle instead of chained retrieval calls; zero-native-deps install (no SQLite/Neo4j/ONNX runtime to ship).
-
-**Where competitors win (today):** Sverklo has better raw retrieval quality on its 90-task bench; CodeGraphContext supports 15 languages vs `dna`'s 2 (TS + Python); Sourcegraph wins on enterprise multi-repo scale; Cursor wins on IDE integration depth.
-
-See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates.
+See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates (~82% fewer exploration tokens, ~53% fewer regressions vs grep-only across 30 simulated tasks).
 
 ## Status
 
-v0.1 (alpha). Working CLI + MCP. Ships 4 context strands: **structural + tests + provenance + invariants**. Regex-based parser for TS/Python (tree-sitter WASM in v0.2). Storage is a single JSON file — SQLite lands when repos push past ~500k LOC.
+v0.2 (alpha). Working CLI + MCP. Ships 5 context strands: **structural + tests + provenance + invariants + notes**. Regex-based parser for TS/Python (tree-sitter WASM in v0.3). Single-file JSON index — SQLite when repos push past ~500k LOC.
 
-v1 roadmap: runtime traces (OTel/Sentry/Datadog), data-layer awareness (which DB tables a symbol touches), cross-repo graphs, AI-assisted invariant authoring from PRs and docs.
+v0.3 roadmap: passive metadata observer (`dna observe` — symbol query frequencies only, never conversation content) + `dna suggest` for the invariant authoring queue + LLM-assisted postmortem promotion.
+
+v0.4 roadmap: session anchoring (`dna attach --session`) — distill a Claude Code / Codex thread into structured `Decision` records attached to the symbols touched.
 
 ## License
 

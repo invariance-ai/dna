@@ -14,6 +14,9 @@ import {
   testsForSymbol,
   loadInvariants,
   invariantsFor,
+  loadNotes,
+  appendNote,
+  rankNotes,
 } from "@invariance/dna-core";
 
 /**
@@ -65,6 +68,22 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const a = args as { symbol: string };
       const all = await loadInvariants(root);
       return { symbol: a.symbol, invariants: invariantsFor(a.symbol, all) };
+    }
+    case "record_learning": {
+      const a = args as {
+        symbol: string;
+        lesson: string;
+        evidence?: string;
+        severity?: "low" | "medium" | "high";
+        source?: "agent" | "human" | "doc" | "git" | "promoted" | "todo";
+      };
+      return appendNote(root, a);
+    }
+    case "notes_for": {
+      const a = args as { symbol: string; include_promoted?: boolean };
+      const all = await loadNotes(root, a.symbol);
+      const notes = rankNotes(all, Number.POSITIVE_INFINITY, !!a.include_promoted);
+      return { symbol: a.symbol, notes };
     }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };
