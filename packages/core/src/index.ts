@@ -9,3 +9,5 @@ export * from "./observer.js";
 export * from "./tests.js";
 export * from "./query.js";
 export * from "./format.js";
+export * from "./gh.js";
+export * from "./promote.js";
