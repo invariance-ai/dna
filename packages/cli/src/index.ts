@@ -32,9 +32,6 @@ registerTests(program);
 registerInvariants(program);
 registerFind(program);
 registerTrace(program);
-registerLearn(program);
-registerNotes(program);
-registerLearnTodos(program);
 registerServe(program);
 registerBench(program);
 

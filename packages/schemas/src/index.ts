@@ -262,3 +262,46 @@ export const TOOLS = {
 } as const;
 
 export type ToolName = keyof typeof TOOLS;
+
+export function toJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  return convertJsonSchema(schema);
+}
+
+function convertJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  if (schema instanceof z.ZodDefault || schema instanceof z.ZodOptional) {
+    return convertJsonSchema(schema._def.innerType);
+  }
+  if (schema instanceof z.ZodString) return { type: "string" };
+  if (schema instanceof z.ZodBoolean) return { type: "boolean" };
+  if (schema instanceof z.ZodNumber) {
+    const out: Record<string, unknown> = { type: "number" };
+    for (const check of schema._def.checks) {
+      if (check.kind === "int") out.type = "integer";
+      if (check.kind === "min") out.minimum = check.value;
+      if (check.kind === "max") out.maximum = check.value;
+    }
+    return out;
+  }
+  if (schema instanceof z.ZodEnum) return { type: "string", enum: schema.options };
+  if (schema instanceof z.ZodArray) {
+    return { type: "array", items: convertJsonSchema(schema.element) };
+  }
+  if (schema instanceof z.ZodRecord) return { type: "object", additionalProperties: true };
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape;
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [key, value] of Object.entries(shape)) {
+      const child = value as z.ZodTypeAny;
+      properties[key] = convertJsonSchema(child);
+      if (!(child instanceof z.ZodDefault) && !(child instanceof z.ZodOptional)) required.push(key);
+    }
+    return {
+      type: "object",
+      properties,
+      required,
+      additionalProperties: false,
+    };
+  }
+  return {};
+}

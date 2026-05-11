@@ -4,7 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { TOOLS, type ToolName } from "@invariance/dna-schemas";
+import { TOOLS, toJsonSchema, type ToolName } from "@invariance/dna-schemas";
 import {
   open as openQuery,
   getContext,
@@ -33,7 +33,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: Object.entries(TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
-    inputSchema: { type: "object", additionalProperties: true },
+    inputSchema: toJsonSchema(def.input),
   })),
 }));
 
