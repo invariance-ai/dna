@@ -1,21 +1,37 @@
 # Using dna with Claude Code
 
-Two ways to wire dna into Claude Code. Pick one.
+Use the CLI surface first. Claude Code is already good at shelling out; `dna`
+should feel like `rg` for repo context and memory.
 
-## Option A — MCP (best for tool-native use)
+## Recommended — CLI + hooks
 
 ```bash
 npm install -g @invariance/dna
 cd your-repo
-dna init && dna index
-claude mcp add dna -- dna serve
+dna init
+dna install claude
+dna index
 ```
 
-Claude Code now sees `prepare_edit`, `get_context`, `impact_of`, `tests_for`, `invariants_for`, `record_learning`, `notes_for`, and `find_reusable` as tools.
+This writes:
 
-## Option B — CLI shell-out (zero config beyond install)
+- `CLAUDE.md` instructions that tell Claude to run `dna` like `rg`
+- `.claude/skills/dna/SKILL.md`
+- `.claude/settings.json` with a non-blocking pre-edit `dna index` hook
 
-If you don't want to wire MCP, just drop this into your `CLAUDE.md`:
+The hook keeps the local index fresh before edits. The skill/instructions teach
+Claude when to run:
+
+```bash
+dna prepare <symbol> --intent "<one-line description>"
+dna tests <symbol> --json
+dna find "<keyword>" --json
+dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
+```
+
+## Manual CLI instructions
+
+If you do not want generated files, add this to `CLAUDE.md` yourself:
 
 ```text
 You have access to `dna`, a CLI that returns structured repo context.
@@ -32,9 +48,9 @@ To check what tests to run after editing:
 
 Same code path, no MCP server needed.
 
-## Auto-connect: Skills + Hooks
+## What the installer writes
 
-For zero-prompt-engineering integration, drop these files into `.claude/` at your repo root. The skill teaches Claude *when* to call dna, and the hooks make it automatic.
+These are the generated files. You can tune them per repo.
 
 ### `.claude/skills/dna/SKILL.md`
 
@@ -64,11 +80,11 @@ For broader change impact, use `dna impact <symbol>`. For finding existing helpe
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|MultiEdit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "dna prepare \"$(jq -r .tool_input.file_path)\" --intent \"about to edit\" 2>/dev/null || true"
+            "command": "dna index --root \"$PWD\" >/dev/null 2>&1 || true"
           }
         ]
       }
@@ -77,6 +93,26 @@ For broader change impact, use `dna impact <symbol>`. For finding existing helpe
 }
 ```
 
-This is a starter — tune `matcher` and the `dna prepare` argument extraction to your repo's symbol-resolution style. The `|| true` keeps the hook non-blocking.
+The hook intentionally indexes rather than guessing a symbol from a file path.
+Symbol-aware context stays in Claude's normal CLI flow via `dna prepare`.
 
-For an **auto-learn** hook on Stop (record what was learned at end of task), see [`./hooks-autolearn.md`](./hooks-autolearn.md) — it's heavier (needs an LLM call to distill the lesson) and lands in dna v0.3 alongside the postmortem command.
+## Native LLM use
+
+Commands that need reasoning print prompts for Claude Code by default:
+
+```bash
+dna postmortem --pr 1287
+dna attach --transcript session.txt
+dna pr-intent --pr 1287
+```
+
+Claude answers using its native model/session; then you persist the result with
+`dna learn`, `dna decide`, or by editing `.dna/invariants.yml`.
+
+## Optional MCP
+
+MCP is still available, but it is secondary to CLI+hooks:
+
+```bash
+claude mcp add dna -- dna serve
+```
