@@ -33,9 +33,12 @@ export function registerSuggest(program: Command): void {
         console.log(kleur.bold(`${results.length} symbol(s) worth documenting:`));
         for (const s of results) {
           const ago = s.last_queried.slice(0, 10);
-          console.log(
-            `  ${kleur.bold(s.symbol)}  ${kleur.dim(`${s.count} queries, last ${ago}`)}  ${kleur.cyan(s.reason)}`,
-          );
+          const stats =
+            s.failure_count > 0
+              ? `${s.failure_count} failures, ${s.count} queries, last ${ago}`
+              : `${s.count} queries, last ${ago}`;
+          const tag = s.reason === "failure" ? kleur.red(s.reason) : kleur.cyan(s.reason);
+          console.log(`  ${kleur.bold(s.symbol)}  ${kleur.dim(stats)}  ${tag}`);
         }
       } catch (e) {
         console.error(kleur.red(`error: ${(e as Error).message}`));

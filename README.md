@@ -23,14 +23,18 @@ dna only surfaces the slice attached to the symbol being edited. The graph does 
 
 ## Quickstart
 
+No install required — `npx` runs the latest published version each time:
+
 ```bash
-npm install -g @invariance/dna
 cd your-repo
-dna init                              # writes .dna/config.yml + .dna/invariants.yml
-dna install claude                    # writes CLI-first CLAUDE.md + .claude skill/hooks
-dna index                             # builds the symbol graph (.dna/index/symbols.json)
-dna learn-todos                       # bootstrap notes from existing TODO/FIXME comments
+npx -y @invariance/dna init                # writes .dna/config.yml + .dna/invariants.yml
+npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks
+npx -y @invariance/dna install codex       # writes AGENTS.md + .codex/config.toml (notify + MCP)
+npx -y @invariance/dna index               # builds the symbol graph
+npx -y @invariance/dna learn-todos         # bootstrap notes from existing TODO/FIXME
 ```
+
+Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so the generated hooks call `dna` directly instead of `npx`.
 
 ## CLI
 
@@ -70,13 +74,19 @@ All read commands accept `--json` (stable contract for tool chaining) or `--mark
 
 Claude Code and Codex agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
 
-For Claude Code, install the project instructions, skill, and non-blocking pre-edit index hook:
+For Claude Code, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
 
 ```bash
-dna install claude
+npx -y @invariance/dna install claude
 ```
 
-For Codex or any shell-based agent, add this to the repo instructions:
+For Codex CLI, the installer writes `AGENTS.md` instructions, registers `dna serve` as an MCP server, and configures a `notify` hook that distills each turn:
+
+```bash
+npx -y @invariance/dna install codex
+```
+
+For any other shell-based agent, add this to the repo instructions:
 
 ```text
 You have access to `dna`, a CLI that returns structured repo context.

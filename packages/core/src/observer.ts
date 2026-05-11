@@ -16,16 +16,24 @@ import path from "node:path";
  */
 const REL = ".dna/observations.json";
 
+export interface FailureEntry {
+  at: string; // ISO timestamp
+  kind: string; // "test" | "typecheck" | "lint" | "bash" | "other"
+  message?: string;
+}
+
+export interface SymbolObservation {
+  count: number;
+  last_queried: string;
+  tools: Record<string, number>; // count by tool name
+  failures?: FailureEntry[];
+  last_prepared?: string; // ISO; set by prepare flow, used by record-failure auto-pick
+}
+
 export interface ObservationStore {
   version: 1;
-  symbols: Record<
-    string,
-    {
-      count: number;
-      last_queried: string;
-      tools: Record<string, number>; // count by tool name
-    }
-  >;
+  symbols: Record<string, SymbolObservation>;
+  last_prepared_symbol?: string;
 }
 
 const EMPTY: ObservationStore = { version: 1, symbols: {} };
@@ -74,11 +82,46 @@ export async function readObservations(root: string): Promise<ObservationStore> 
   return readStore(root);
 }
 
+export async function recordPrepared(root: string, symbol: string): Promise<void> {
+  const store = await readStore(root);
+  const entry = store.symbols[symbol] ?? {
+    count: 0,
+    last_queried: new Date(0).toISOString(),
+    tools: {},
+  };
+  entry.last_prepared = new Date().toISOString();
+  store.symbols[symbol] = entry;
+  store.last_prepared_symbol = symbol;
+  await writeStore(root, store);
+}
+
+export async function recordFailure(
+  root: string,
+  symbol: string | undefined,
+  failure: FailureEntry,
+): Promise<string | null> {
+  const store = await readStore(root);
+  const target = symbol ?? store.last_prepared_symbol;
+  if (!target) return null;
+  const entry = store.symbols[target] ?? {
+    count: 0,
+    last_queried: new Date(0).toISOString(),
+    tools: {},
+  };
+  entry.failures = entry.failures ?? [];
+  entry.failures.push(failure);
+  if (entry.failures.length > 50) entry.failures = entry.failures.slice(-50);
+  store.symbols[target] = entry;
+  await writeStore(root, store);
+  return target;
+}
+
 export interface Suggestion {
   symbol: string;
   count: number;
   last_queried: string;
-  reason: "no_invariant" | "no_note" | "high_traffic";
+  failure_count: number;
+  reason: "failure" | "no_invariant" | "no_note" | "high_traffic";
 }
 
 import { loadInvariants, invariantsFor } from "./invariants.js";
@@ -99,16 +142,29 @@ export async function suggest(
 
   const out: Suggestion[] = [];
   for (const [symbol, entry] of Object.entries(store.symbols)) {
-    if (entry.count < min) continue;
+    const failureCount = entry.failures?.length ?? 0;
+    if (entry.count < min && failureCount === 0) continue;
     const covered = invariantsFor(symbol, invariants).length > 0;
     if (covered) continue;
     const noteCount = (await loadNotes(root, symbol)).length;
+    const reason: Suggestion["reason"] =
+      failureCount > 0 ? "failure" : noteCount === 0 ? "no_note" : "no_invariant";
     out.push({
       symbol,
       count: entry.count,
       last_queried: entry.last_queried,
-      reason: noteCount === 0 ? "no_note" : "no_invariant",
+      failure_count: failureCount,
+      reason,
     });
   }
-  return out.sort((a, b) => b.count - a.count).slice(0, limit);
+  // Failures rank above pure-query symbols. Within each tier, more is worse.
+  return out
+    .sort((a, b) => {
+      const fa = a.failure_count > 0 ? 1 : 0;
+      const fb = b.failure_count > 0 ? 1 : 0;
+      if (fa !== fb) return fb - fa;
+      if (a.failure_count !== b.failure_count) return b.failure_count - a.failure_count;
+      return b.count - a.count;
+    })
+    .slice(0, limit);
 }
