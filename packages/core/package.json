@@ -1,0 +1,20 @@
+{
+  "name": "@invariance/dna-core",
+  "version": "0.0.1",
+  "description": "Parser, resolver, graph store, and query layer for dna.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@invariance/dna-schemas": "workspace:*",
+    "tree-sitter": "^0.21.0",
+    "tree-sitter-typescript": "^0.23.0",
+    "tree-sitter-python": "^0.23.0",
+    "yaml": "^2.5.0"
+  }
+}

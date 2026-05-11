@@ -1,0 +1,21 @@
+{
+  "name": "@invariance/dna",
+  "version": "0.0.1",
+  "description": "dna CLI — codebase context for coding agents.",
+  "license": "MIT",
+  "bin": {
+    "dna": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@invariance/dna-core": "workspace:*",
+    "@invariance/dna-schemas": "workspace:*",
+    "commander": "^12.1.0",
+    "kleur": "^4.1.5"
+  }
+}

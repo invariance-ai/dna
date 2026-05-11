@@ -1,0 +1,16 @@
+# .dna/config.yml — copy to .dna/config.yml after `dna init`
+languages: [typescript, python]
+exclude:
+  - node_modules
+  - dist
+  - build
+  - .next
+  - vendor
+  - __pycache__
+  - .venv
+depth: 3
+strands:
+  - structural
+  - tests
+  - provenance
+  - invariants

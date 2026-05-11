@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+.dna/index/
+.dna/cache/
+coverage/
+*.log
+.turbo/
