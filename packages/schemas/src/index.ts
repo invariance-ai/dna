@@ -124,6 +124,7 @@ export const ContextResult = z.object({
   provenance: z.array(ProvenanceEntry),
   invariants: z.array(Invariant),
   notes: z.array(Note).default([]),
+  decisions: z.array(Decision).default([]),
   risk: z.enum(["low", "medium", "high"]),
 });
 export type ContextResult = z.infer<typeof ContextResult>;
@@ -181,6 +182,29 @@ export const NotesForResult = z.object({
 });
 export type NotesForResult = z.infer<typeof NotesForResult>;
 
+export const RecordDecisionInput = z.object({
+  symbol: z.string(),
+  decision: z.string(),
+  rejected_alternative: z.string().optional(),
+  rationale: z.string().optional(),
+  made_by: z.string().optional(),
+  session: z.string().optional(),
+});
+export type RecordDecisionInput = z.infer<typeof RecordDecisionInput>;
+export const RecordDecisionResult = z.object({
+  decision: Decision,
+  file: z.string(),
+});
+export type RecordDecisionResult = z.infer<typeof RecordDecisionResult>;
+
+export const DecisionsForInput = z.object({ symbol: z.string() });
+export type DecisionsForInput = z.infer<typeof DecisionsForInput>;
+export const DecisionsForResult = z.object({
+  symbol: z.string(),
+  decisions: z.array(Decision),
+});
+export type DecisionsForResult = z.infer<typeof DecisionsForResult>;
+
 export const FindReusableInput = z.object({
   query: z.string(),
   kind: SymbolKind.optional(),
@@ -206,6 +230,7 @@ export const PrepareEditResult = z.object({
   markdown: z.string(),
   invariants_to_respect: z.array(Invariant),
   notes: z.array(Note).default([]),
+  decisions: z.array(Decision).default([]),
   tests_to_run: z.array(z.string()),
   risk: z.enum(["low", "medium", "high"]),
 });
@@ -258,6 +283,17 @@ export const TOOLS = {
       "Lessons (notes) attached to a symbol. Returns un-promoted notes by default; set include_promoted to also see ones that have been lifted to invariants.",
     input: NotesForInput,
     output: NotesForResult,
+  },
+  record_decision: {
+    description:
+      "Persist a decision made about a symbol — a choice with the rejected alternative and rationale. Use when an explicit design choice was made that future agents and humans should not re-litigate.",
+    input: RecordDecisionInput,
+    output: RecordDecisionResult,
+  },
+  decisions_for: {
+    description: "Decisions previously recorded for a symbol.",
+    input: DecisionsForInput,
+    output: DecisionsForResult,
   },
 } as const;
 

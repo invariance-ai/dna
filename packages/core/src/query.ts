@@ -15,6 +15,7 @@ import { loadInvariants, invariantsFor } from "./invariants.js";
 import { testsForSymbol } from "./tests.js";
 import { logForFile, churn, isGitRepo } from "./git.js";
 import { loadNotes, rankNotes } from "./notes.js";
+import { loadDecisions, rankDecisions } from "./decisions.js";
 
 export interface QueryContext {
   root: string;
@@ -89,10 +90,12 @@ export async function getContext(
     : [];
   const notesAll = await loadNotes(ctx.root, sym.name);
   const notes = rankNotes(notesAll, 5);
+  const decisionsAll = await loadDecisions(ctx.root, sym.name);
+  const decisions = rankDecisions(decisionsAll, 3);
 
   const risk = computeRisk({ callers, tests, invariants, churn: await safeChurn(ctx.root, sym.file) });
 
-  return { symbol: sym, callers, callees, tests, provenance, invariants, notes, risk };
+  return { symbol: sym, callers, callees, tests, provenance, invariants, notes, decisions, risk };
 }
 
 export async function impactOf(
@@ -109,9 +112,14 @@ export async function impactOf(
     const next: SymbolRef[] = [];
     for (const current of frontier) {
       const key = current.id ?? current.qualified_name ?? current.name;
-      if (visited.has(key)) continue;
       visited.add(key);
-      for (const c of callersOf(current, ctx)) next.push(c);
+      for (const c of callersOf(current, ctx)) {
+        const callerKey = c.id ?? c.qualified_name ?? c.name;
+        if (!visited.has(callerKey)) {
+          visited.add(callerKey);
+          next.push(c);
+        }
+      }
     }
     frontier.length = 0;
     frontier.push(...next);
@@ -148,6 +156,7 @@ export async function prepareEdit(
     markdown: md,
     invariants_to_respect: c.invariants,
     notes: c.notes,
+    decisions: c.decisions,
     tests_to_run: c.tests.map((t) => t.file),
     risk: c.risk,
   };
@@ -217,6 +226,17 @@ function formatPrepareEdit(c: ContextResult, intent: string): string {
     for (const n of c.notes) {
       L.push(`- **[${n.severity}]** ${n.lesson}`);
       if (n.evidence) L.push(`  - evidence: ${n.evidence}`);
+    }
+    L.push("");
+  }
+  if (c.decisions.length) {
+    L.push("## Past decisions");
+    for (const d of c.decisions) {
+      L.push(`- **${d.decision}**`);
+      if (d.rejected_alternative) L.push(`  - rejected: ${d.rejected_alternative}`);
+      if (d.rationale) L.push(`  - rationale: ${d.rationale}`);
+      const meta = [d.made_by && `by ${d.made_by}`, d.session && `from ${d.session}`].filter(Boolean).join(", ");
+      if (meta) L.push(`  - ${meta}`);
     }
     L.push("");
   }

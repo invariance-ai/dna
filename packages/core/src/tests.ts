@@ -13,6 +13,9 @@ import type { DnaIndex } from "./index_store.js";
  */
 export function testFilesIn(index: DnaIndex): string[] {
   const set = new Set<string>();
+  for (const file of index.files ?? []) {
+    if (isTestFile(file)) set.add(file);
+  }
   for (const s of index.symbols) {
     if (isTestFile(s.file)) set.add(s.file);
   }

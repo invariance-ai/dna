@@ -4,7 +4,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { TOOLS, toJsonSchema, type ToolName } from "@invariance/dna-schemas";
+import { z } from "zod";
+import { TOOLS, type ToolName } from "@invariance/dna-schemas";
 import {
   open as openQuery,
   getContext,
@@ -17,6 +18,9 @@ import {
   loadNotes,
   appendNote,
   rankNotes,
+  loadDecisions,
+  appendDecision,
+  rankDecisions,
 } from "@invariance/dna-core";
 
 /**
@@ -85,6 +89,15 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const notes = rankNotes(all, Number.POSITIVE_INFINITY, !!a.include_promoted);
       return { symbol: a.symbol, notes };
     }
+    case "record_decision": {
+      const a = args as Parameters<typeof appendDecision>[1];
+      return appendDecision(root, a);
+    }
+    case "decisions_for": {
+      const a = args as { symbol: string };
+      const decisions = rankDecisions(await loadDecisions(root, a.symbol), Number.POSITIVE_INFINITY);
+      return { symbol: a.symbol, decisions };
+    }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };
       const ctx = await openQuery(root);
@@ -116,3 +129,33 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+function toJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  if (schema instanceof z.ZodDefault || schema instanceof z.ZodOptional) {
+    return toJsonSchema(schema._def.innerType);
+  }
+  if (schema instanceof z.ZodString) return { type: "string" };
+  if (schema instanceof z.ZodBoolean) return { type: "boolean" };
+  if (schema instanceof z.ZodNumber) {
+    const out: Record<string, unknown> = { type: "number" };
+    for (const check of schema._def.checks) {
+      if (check.kind === "int") out.type = "integer";
+      if (check.kind === "min") out.minimum = check.value;
+      if (check.kind === "max") out.maximum = check.value;
+    }
+    return out;
+  }
+  if (schema instanceof z.ZodEnum) return { type: "string", enum: schema.options };
+  if (schema instanceof z.ZodArray) return { type: "array", items: toJsonSchema(schema.element) };
+  if (schema instanceof z.ZodObject) {
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [key, value] of Object.entries(schema.shape)) {
+      const child = value as z.ZodTypeAny;
+      properties[key] = toJsonSchema(child);
+      if (!(child instanceof z.ZodDefault) && !(child instanceof z.ZodOptional)) required.push(key);
+    }
+    return { type: "object", properties, required, additionalProperties: false };
+  }
+  return {};
+}

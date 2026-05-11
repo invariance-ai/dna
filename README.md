@@ -48,6 +48,8 @@ dna trace <symbol>                                    # git provenance
 dna learn <symbol> --lesson "..." [--severity low|medium|high] [--evidence <ref>]
 dna notes <symbol>                                    # what previous edits left behind
 dna learn-todos                                       # one-shot: lift TODO/FIXME into notes
+dna decide <symbol> --decision "..." [--rejected "..."] [--rationale "..."]
+dna decisions <symbol>                                # choices recorded, with rejected alternatives
 
 # Server
 dna index --watch                                     # rebuild on changes
@@ -105,6 +107,11 @@ $ dna prepare createRefund --intent "add $5000 cap for non-enterprise"
 - **[medium]** wrap stripe.refunds.create in withRetry — flaky on Mondays
   - evidence: incident-2026-04-22
 
+## Past decisions
+- **validate amount before currency conversion**
+  - rejected: validate after conversion (breaks for JPY)
+  - rationale: $0.99 USD must not become 99 JPY
+
 ## Recent changes
 - `a3f2c11` 2026-05-04 alex: added idempotency_key arg
 ```
@@ -137,7 +144,7 @@ Three artifact types, one symbol anchor:
 |---|---|---|---|
 | **Note** | a general lesson | anyone (agent, human, doc, TODO) | invariant (when patterns recur) |
 | **Invariant** | a rule that must hold | PM / eng lead | — |
-| **Decision** *(v0.4)* | a choice with rejected alternative | LLM-distilled from sessions/PRs | — |
+| **Decision** | a choice with rejected alternative | human / agent now, LLM-distilled from sessions later | — |
 
 Notes "deflate" over time — recurring ones get promoted to invariants, and dna stops surfacing the note (the invariant strand picks it up instead). That's the asset-building mechanic.
 
@@ -160,7 +167,7 @@ See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full 
 
 ## Status
 
-v0.2 (alpha). Working CLI + MCP. Ships 5 context strands: **structural + tests + provenance + invariants + notes**. Regex-based parser for TS/Python (tree-sitter WASM in v0.3). Single-file JSON index — SQLite when repos push past ~500k LOC.
+v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python; tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.
 
 v0.3 roadmap: passive metadata observer (`dna observe` — symbol query frequencies only, never conversation content) + `dna suggest` for the invariant authoring queue + LLM-assisted postmortem promotion.
 
