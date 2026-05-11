@@ -11,3 +11,4 @@ export * from "./query.js";
 export * from "./format.js";
 export * from "./gh.js";
 export * from "./promote.js";
+export * from "./preferences.js";

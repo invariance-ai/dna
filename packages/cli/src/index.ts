@@ -24,14 +24,22 @@ import { registerAttach } from "./commands/attach.js";
 import { registerPrIntent } from "./commands/pr-intent.js";
 import { registerContextFromPrompt } from "./commands/context-from-prompt.js";
 import { registerRecordFailure } from "./commands/record-failure.js";
+import { registerWizard } from "./commands/wizard.js";
+import { registerPrefer } from "./commands/prefer.js";
+import { registerPreferences } from "./commands/preferences.js";
+import { registerCapturePreference } from "./commands/capture-preference.js";
 
 const program = new Command()
   .name("dna")
   .description("Codebase context for coding agents.")
-  .version("0.0.1");
+  .version("0.1.0");
 
 registerInit(program);
+registerWizard(program);
 registerInstall(program);
+registerPrefer(program);
+registerPreferences(program);
+registerCapturePreference(program);
 registerIndex(program);
 registerPrepare(program);
 registerContext(program);

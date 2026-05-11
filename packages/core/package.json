@@ -1,11 +1,18 @@
 {
   "name": "@invariance/dna-core",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Parser, resolver, graph store, and query layer for dna.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

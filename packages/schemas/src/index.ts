@@ -104,6 +104,26 @@ export const Decision = z.object({
 });
 export type Decision = z.infer<typeof Decision>;
 
+/* ---------- Preferences (v0.3) ---------- */
+
+export const PreferenceScope = z.enum(["repo", "user", "global"]);
+export type PreferenceScope = z.infer<typeof PreferenceScope>;
+
+export const PreferenceSource = z.enum(["manual", "auto", "wizard"]);
+export type PreferenceSource = z.infer<typeof PreferenceSource>;
+
+export const Preference = z.object({
+  id: z.string(),
+  text: z.string(),
+  scope: PreferenceScope.default("repo"),
+  topic: z.string().optional(),
+  evidence: z.string().optional(),
+  source: PreferenceSource.default("manual"),
+  recorded_at: z.string(),
+  hits: z.number().int().nonnegative().default(0),
+});
+export type Preference = z.infer<typeof Preference>;
+
 /* ---------- Tool I/O ---------- */
 
 export const Strand = z.enum(["structural", "tests", "provenance", "invariants"]);

@@ -35,35 +35,53 @@ const INVARIANTS = `# .dna/invariants.yml — declarative constraints for symbol
   severity: block
 `;
 
-export function registerInit(program: Command): void {
-  addRootOption(program
-    .command("init")
-    .description("Initialize .dna/ in this directory (config + invariants)")
-    .option("--force", "Overwrite existing files"))
-    .action(async (opts: RootOption & { force?: boolean }) => {
-      const root = resolveRoot(opts);
-      const dnaDir = path.join(root, ".dna");
-      await mkdir(dnaDir, { recursive: true });
+export interface InitOpts {
+  force?: boolean;
+}
 
-      const writes: Array<[string, string]> = [
-        [path.join(dnaDir, "config.yml"), CONFIG],
-        [path.join(dnaDir, "invariants.yml"), INVARIANTS],
-      ];
+export interface InitResult {
+  writes: Array<{ action: "wrote" | "exists"; relPath: string }>;
+}
 
-      for (const [p, content] of writes) {
-        if (!opts.force) {
-          try {
-            await access(p);
-            console.log(kleur.dim(`exists  ${path.relative(root, p)}  (use --force to overwrite)`));
-            continue;
-          } catch {
-            /* doesn't exist, fall through */
-          }
-        }
-        await writeFile(p, content);
-        console.log(kleur.green(`wrote   ${path.relative(root, p)}`));
+export async function runInitCore(root: string, opts: InitOpts): Promise<InitResult> {
+  const dnaDir = path.join(root, ".dna");
+  await mkdir(dnaDir, { recursive: true });
+  const writes: InitResult["writes"] = [];
+  const targets: Array<[string, string]> = [
+    [path.join(dnaDir, "config.yml"), CONFIG],
+    [path.join(dnaDir, "invariants.yml"), INVARIANTS],
+  ];
+  for (const [p, content] of targets) {
+    const rel = path.relative(root, p);
+    if (!opts.force) {
+      try {
+        await access(p);
+        writes.push({ action: "exists", relPath: rel });
+        continue;
+      } catch {
+        /* doesn't exist, fall through */
       }
-      console.log("");
-      console.log(`Next: ${kleur.bold("dna index")} to build the symbol graph.`);
-    });
+    }
+    await writeFile(p, content);
+    writes.push({ action: "wrote", relPath: rel });
+  }
+  return { writes };
+}
+
+export function registerInit(program: Command): void {
+  addRootOption(
+    program
+      .command("init")
+      .description("Initialize .dna/ in this directory (config + invariants)")
+      .option("--force", "Overwrite existing files"),
+  ).action(async (opts: RootOption & { force?: boolean }) => {
+    const root = resolveRoot(opts);
+    const result = await runInitCore(root, { force: !!opts.force });
+    for (const w of result.writes) {
+      if (w.action === "wrote") console.log(kleur.green("wrote   ") + w.relPath);
+      else console.log(kleur.dim(`exists  ${w.relPath}  (use --force to overwrite)`));
+    }
+    console.log("");
+    console.log(`Next: ${kleur.bold("dna wizard")} to wire agents, or ${kleur.bold("dna index")} to build the symbol graph.`);
+  });
 }
