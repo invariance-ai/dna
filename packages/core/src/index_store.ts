@@ -16,6 +16,7 @@ export interface DnaIndex {
   version: 1;
   built_at: string;
   root: string;
+  files: string[];
   symbols: SymbolRef[];
   edges: Array<{
     from: string;
@@ -91,6 +92,7 @@ export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
     version: 1,
     built_at: new Date().toISOString(),
     root,
+    files: parsed.map((file) => path.relative(root, file.path)),
     symbols,
     edges,
   };

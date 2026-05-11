@@ -55,6 +55,7 @@ export async function parseFile(filePath: string): Promise<ParsedFile> {
   const classScopes: Array<{ name: string; line: number; indent: number }> = [];
 
   for (const { kind, re } of patterns) {
+    re.lastIndex = 0;
     for (const m of src.matchAll(re)) {
       const name = m[1];
       if (!name || KEYWORDS.has(name)) continue;

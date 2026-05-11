@@ -109,9 +109,14 @@ export async function impactOf(
     const next: SymbolRef[] = [];
     for (const current of frontier) {
       const key = current.id ?? current.qualified_name ?? current.name;
-      if (visited.has(key)) continue;
       visited.add(key);
-      for (const c of callersOf(current, ctx)) next.push(c);
+      for (const c of callersOf(current, ctx)) {
+        const callerKey = c.id ?? c.qualified_name ?? c.name;
+        if (!visited.has(callerKey)) {
+          visited.add(callerKey);
+          next.push(c);
+        }
+      }
     }
     frontier.length = 0;
     frontier.push(...next);
