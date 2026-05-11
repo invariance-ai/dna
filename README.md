@@ -173,6 +173,22 @@ Notes "deflate" over time — recurring ones get promoted to invariants, and dna
 
 See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates (~82% fewer exploration tokens, ~53% fewer regressions vs grep-only across 30 simulated tasks).
 
+## LLM-assisted commands (optional, set `ANTHROPIC_API_KEY`)
+
+A few commands ask Claude to do work — these need an Anthropic API key. They're optional; everything else runs purely locally.
+
+```bash
+# Propose an invariant from a regression PR (uses gh CLI for diff + body)
+dna postmortem --pr 1287
+dna postmortem --pr 1287 --dry-run                  # see the prompt; no API call
+dna postmortem --diff-file my.diff --symbol createRefund   # offline alternative
+
+# Find clusters of similar notes that should become invariants
+dna promote createRefund                            # rule-based, no API key needed
+```
+
+Set `ANTHROPIC_API_KEY` in your environment, or pass `--api-key`. Default model is `claude-opus-4-7` with adaptive thinking; override via `--model` if you want.
+
 ## Status
 
 v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python; tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.

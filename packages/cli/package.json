@@ -15,8 +15,10 @@
   },
   "dependencies": {
     "@invariance/dna-core": "workspace:*",
+    "@invariance/dna-llm": "workspace:*",
     "@invariance/dna-mcp": "workspace:*",
     "@invariance/dna-schemas": "workspace:*",
+    "yaml": "^2.5.0",
     "commander": "^12.1.0",
     "kleur": "^4.1.5"
   }
