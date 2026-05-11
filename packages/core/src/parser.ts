@@ -52,16 +52,27 @@ export async function parseFile(filePath: string): Promise<ParsedFile> {
   const patterns = language === "python" ? PY_PATTERNS : TS_PATTERNS;
   const symbols: SymbolRef[] = [];
   const seen = new Set<string>();
+  const classScopes: Array<{ name: string; line: number; indent: number }> = [];
 
   for (const { kind, re } of patterns) {
     for (const m of src.matchAll(re)) {
       const name = m[1];
       if (!name || KEYWORDS.has(name)) continue;
-      const key = `${kind}:${name}`;
+      const line = src.slice(0, m.index).split("\n").length;
+      const text = src.split("\n")[line - 1] ?? "";
+      if (kind === "method" && /^\s*(?:export\s+)?(?:async\s+)?function\b/.test(text)) continue;
+      if (kind === "method" && /^\s*(?:export\s+)?const\b/.test(text)) continue;
+      const indent = leadingWhitespace(text);
+      const container =
+        kind === "method"
+          ? nearestClass(classScopes, line, indent)?.name
+          : undefined;
+      const qualified_name = container ? `${container}.${name}` : name;
+      const key = `${kind}:${qualified_name}:${line}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const line = src.slice(0, m.index).split("\n").length;
-      symbols.push({ name, file: filePath, line, kind });
+      symbols.push({ name, qualified_name, container, file: filePath, line, kind });
+      if (kind === "class") classScopes.push({ name, line, indent });
     }
   }
 
@@ -85,6 +96,20 @@ export async function parseFile(filePath: string): Promise<ParsedFile> {
   }
 
   return { path: filePath, language, symbols, call_sites };
+}
+
+function leadingWhitespace(line: string): number {
+  return line.match(/^\s*/)?.[0].length ?? 0;
+}
+
+function nearestClass(
+  scopes: Array<{ name: string; line: number; indent: number }>,
+  line: number,
+  indent: number,
+): { name: string; line: number; indent: number } | undefined {
+  return scopes
+    .filter((s) => s.line < line && s.indent < indent)
+    .sort((a, b) => b.line - a.line)[0];
 }
 
 export const TS_GLOB = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];

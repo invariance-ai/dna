@@ -16,7 +16,10 @@ export const SymbolKind = z.enum([
 export type SymbolKind = z.infer<typeof SymbolKind>;
 
 export const SymbolRef = z.object({
+  id: z.string().optional(),
   name: z.string(),
+  qualified_name: z.string().optional(),
+  container: z.string().optional(),
   file: z.string(),
   line: z.number().int().nonnegative(),
   kind: SymbolKind,
@@ -39,6 +42,9 @@ export const Edge = z.object({
   target: SymbolRef,
 });
 export type Edge = z.infer<typeof Edge>;
+
+export const JsonSchema = z.record(z.unknown());
+export type JsonSchema = z.infer<typeof JsonSchema>;
 
 export const ProvenanceEntry = z.object({
   commit: z.string(),
@@ -64,6 +70,40 @@ export const TestRef = z.object({
 });
 export type TestRef = z.infer<typeof TestRef>;
 
+/* ---------- Notes & Decisions (v0.2) ---------- */
+
+export const NoteSeverity = z.enum(["low", "medium", "high"]);
+export type NoteSeverity = z.infer<typeof NoteSeverity>;
+
+export const NoteSource = z.enum(["agent", "human", "doc", "git", "promoted", "todo"]);
+export type NoteSource = z.infer<typeof NoteSource>;
+
+export const Note = z.object({
+  symbol: z.string(),
+  lesson: z.string(),
+  evidence: z.string().optional(),
+  severity: NoteSeverity.default("medium"),
+  promoted: z.boolean().default(false),
+  recorded_at: z.string(),
+  source: NoteSource.default("agent"),
+});
+export type Note = z.infer<typeof Note>;
+
+/**
+ * Schema-only in v0.2. CLI lands in v0.4 (`dna attach --session`). Defined
+ * now so data collected via future channels does not need migration.
+ */
+export const Decision = z.object({
+  symbol: z.string(),
+  decision: z.string(),
+  rejected_alternative: z.string().optional(),
+  rationale: z.string().optional(),
+  made_by: z.string().optional(),
+  session: z.string().optional(),
+  recorded_at: z.string(),
+});
+export type Decision = z.infer<typeof Decision>;
+
 /* ---------- Tool I/O ---------- */
 
 export const Strand = z.enum(["structural", "tests", "provenance", "invariants"]);
@@ -83,6 +123,7 @@ export const ContextResult = z.object({
   tests: z.array(TestRef),
   provenance: z.array(ProvenanceEntry),
   invariants: z.array(Invariant),
+  notes: z.array(Note).default([]),
   risk: z.enum(["low", "medium", "high"]),
 });
 export type ContextResult = z.infer<typeof ContextResult>;
@@ -115,6 +156,31 @@ export const InvariantsForResult = z.object({
 });
 export type InvariantsForResult = z.infer<typeof InvariantsForResult>;
 
+export const RecordLearningInput = z.object({
+  symbol: z.string(),
+  lesson: z.string(),
+  evidence: z.string().optional(),
+  severity: NoteSeverity.default("medium"),
+  source: NoteSource.default("agent"),
+});
+export type RecordLearningInput = z.infer<typeof RecordLearningInput>;
+export const RecordLearningResult = z.object({
+  note: Note,
+  file: z.string(),
+});
+export type RecordLearningResult = z.infer<typeof RecordLearningResult>;
+
+export const NotesForInput = z.object({
+  symbol: z.string(),
+  include_promoted: z.boolean().default(false),
+});
+export type NotesForInput = z.infer<typeof NotesForInput>;
+export const NotesForResult = z.object({
+  symbol: z.string(),
+  notes: z.array(Note),
+});
+export type NotesForResult = z.infer<typeof NotesForResult>;
+
 export const FindReusableInput = z.object({
   query: z.string(),
   kind: SymbolKind.optional(),
@@ -139,6 +205,7 @@ export type PrepareEditInput = z.infer<typeof PrepareEditInput>;
 export const PrepareEditResult = z.object({
   markdown: z.string(),
   invariants_to_respect: z.array(Invariant),
+  notes: z.array(Note).default([]),
   tests_to_run: z.array(z.string()),
   risk: z.enum(["low", "medium", "high"]),
 });
@@ -180,6 +247,61 @@ export const TOOLS = {
     input: FindReusableInput,
     output: FindReusableResult,
   },
+  record_learning: {
+    description:
+      "Persist a lesson learned about a symbol. Call after a non-trivial edit to make future agents and humans inherit what you discovered. Lessons are short, actionable, and tied to one symbol.",
+    input: RecordLearningInput,
+    output: RecordLearningResult,
+  },
+  notes_for: {
+    description:
+      "Lessons (notes) attached to a symbol. Returns un-promoted notes by default; set include_promoted to also see ones that have been lifted to invariants.",
+    input: NotesForInput,
+    output: NotesForResult,
+  },
 } as const;
 
 export type ToolName = keyof typeof TOOLS;
+
+export function toJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  return convertJsonSchema(schema);
+}
+
+function convertJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  if (schema instanceof z.ZodDefault || schema instanceof z.ZodOptional) {
+    return convertJsonSchema(schema._def.innerType);
+  }
+  if (schema instanceof z.ZodString) return { type: "string" };
+  if (schema instanceof z.ZodBoolean) return { type: "boolean" };
+  if (schema instanceof z.ZodNumber) {
+    const out: Record<string, unknown> = { type: "number" };
+    for (const check of schema._def.checks) {
+      if (check.kind === "int") out.type = "integer";
+      if (check.kind === "min") out.minimum = check.value;
+      if (check.kind === "max") out.maximum = check.value;
+    }
+    return out;
+  }
+  if (schema instanceof z.ZodEnum) return { type: "string", enum: schema.options };
+  if (schema instanceof z.ZodArray) {
+    return { type: "array", items: convertJsonSchema(schema.element) };
+  }
+  if (schema instanceof z.ZodRecord) return { type: "object", additionalProperties: true };
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape;
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [key, value] of Object.entries(shape)) {
+      const child = value as z.ZodTypeAny;
+      properties[key] = convertJsonSchema(child);
+      if (!(child instanceof z.ZodDefault) && !(child instanceof z.ZodOptional)) required.push(key);
+    }
+    return {
+      type: "object",
+      properties,
+      required,
+      additionalProperties: false,
+    };
+  }
+  return {};
+}

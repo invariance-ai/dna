@@ -7,15 +7,16 @@ import {
   isGitRepo,
   formatTracePretty,
 } from "@invariance/dna-core";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerTrace(program: Command): void {
-  program
+  addRootOption(program
     .command("trace <symbol>")
     .description("Git provenance for a symbol (who, when, last changes)")
     .option("--json", "Emit JSON instead of pretty output")
-    .option("--limit <n>", "Number of commits", (v) => parseInt(v, 10), 10)
-    .action(async (symbol: string, opts: { json?: boolean; limit: number }) => {
-      const root = process.cwd();
+    .option("--limit <n>", "Number of commits", (v) => parseInt(v, 10), 10))
+    .action(async (symbol: string, opts: RootOption & { json?: boolean; limit: number }) => {
+      const root = resolveRoot(opts);
       try {
         const ctx = await openQuery(root);
         const sym = resolveSymbol(symbol, ctx);

@@ -4,7 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { TOOLS, type ToolName } from "@invariance/dna-schemas";
+import { TOOLS, toJsonSchema, type ToolName } from "@invariance/dna-schemas";
 import {
   open as openQuery,
   getContext,
@@ -14,6 +14,9 @@ import {
   testsForSymbol,
   loadInvariants,
   invariantsFor,
+  loadNotes,
+  appendNote,
+  rankNotes,
 } from "@invariance/dna-core";
 
 /**
@@ -30,7 +33,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: Object.entries(TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
-    inputSchema: { type: "object", additionalProperties: true },
+    inputSchema: toJsonSchema(def.input),
   })),
 }));
 
@@ -66,6 +69,22 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const all = await loadInvariants(root);
       return { symbol: a.symbol, invariants: invariantsFor(a.symbol, all) };
     }
+    case "record_learning": {
+      const a = args as {
+        symbol: string;
+        lesson: string;
+        evidence?: string;
+        severity?: "low" | "medium" | "high";
+        source?: "agent" | "human" | "doc" | "git" | "promoted" | "todo";
+      };
+      return appendNote(root, a);
+    }
+    case "notes_for": {
+      const a = args as { symbol: string; include_promoted?: boolean };
+      const all = await loadNotes(root, a.symbol);
+      const notes = rankNotes(all, Number.POSITIVE_INFINITY, !!a.include_promoted);
+      return { symbol: a.symbol, notes };
+    }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };
       const ctx = await openQuery(root);
@@ -74,9 +93,13 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         .map((s) => {
           if (a.kind && s.kind !== a.kind) return null;
           const n = s.name.toLowerCase();
+          const qn = s.qualified_name?.toLowerCase();
           let score = 0;
-          if (n === q) score = 1;
+          if (qn === q) score = 1;
+          else if (n === q) score = 0.95;
+          else if (qn?.startsWith(q)) score = 0.85;
           else if (n.startsWith(q)) score = 0.8;
+          else if (qn?.includes(q)) score = 0.65;
           else if (n.includes(q)) score = 0.6;
           else return null;
           return { symbol: s, score };

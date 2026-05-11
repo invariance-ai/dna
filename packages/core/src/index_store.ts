@@ -17,7 +17,15 @@ export interface DnaIndex {
   built_at: string;
   root: string;
   symbols: SymbolRef[];
-  edges: Array<{ from: string; to: string; type: "calls" }>;
+  edges: Array<{
+    from: string;
+    to: string;
+    from_id?: string;
+    to_id?: string;
+    type: "calls";
+    file?: string;
+    line?: number;
+  }>;
 }
 
 const REL = ".dna/index/symbols.json";
@@ -39,24 +47,43 @@ export async function readIndex(root: string): Promise<DnaIndex> {
 
 export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
   const symbols: SymbolRef[] = [];
-  const byName = new Map<string, SymbolRef>();
+  const byName = new Map<string, SymbolRef[]>();
+  const byQualifiedName = new Map<string, SymbolRef>();
+  const byFileAndName = new Map<string, SymbolRef[]>();
   for (const file of parsed) {
     for (const s of file.symbols) {
+      const relFile = path.relative(root, s.file);
+      const qualified_name = s.qualified_name ?? s.name;
       const rel: SymbolRef = {
         ...s,
-        file: path.relative(root, s.file),
+        id: symbolId(relFile, qualified_name, s.line),
+        qualified_name,
+        file: relFile,
       };
       symbols.push(rel);
-      if (!byName.has(rel.name)) byName.set(rel.name, rel);
+      push(byName, rel.name, rel);
+      push(byFileAndName, `${rel.file}:${rel.name}`, rel);
+      if (!byQualifiedName.has(qualified_name)) byQualifiedName.set(qualified_name, rel);
     }
   }
 
   const edges: DnaIndex["edges"] = [];
   for (const file of parsed) {
+    const relFile = path.relative(root, file.path);
     for (const cs of file.call_sites) {
-      if (!byName.has(cs.callee_name)) continue; // skip externals/built-ins
       if (cs.from === "<module>" || cs.from === cs.callee_name) continue;
-      edges.push({ from: cs.from, to: cs.callee_name, type: "calls" });
+      const from = resolveLocalSymbol(relFile, cs.from, byFileAndName, byQualifiedName, byName);
+      const to = resolveLocalSymbol(relFile, cs.callee_name, byFileAndName, byQualifiedName, byName);
+      if (!from || !to) continue; // skip externals/built-ins/ambiguous globals
+      edges.push({
+        from: from.qualified_name ?? from.name,
+        to: to.qualified_name ?? to.name,
+        from_id: from.id,
+        to_id: to.id,
+        type: "calls",
+        file: relFile,
+        line: cs.line,
+      });
     }
   }
 
@@ -67,4 +94,30 @@ export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
     symbols,
     edges,
   };
+}
+
+function symbolId(file: string, qualifiedName: string, line: number): string {
+  return `${file}#${qualifiedName}:${line}`;
+}
+
+function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const existing = map.get(key);
+  if (existing) existing.push(value);
+  else map.set(key, [value]);
+}
+
+function resolveLocalSymbol(
+  file: string,
+  name: string,
+  byFileAndName: Map<string, SymbolRef[]>,
+  byQualifiedName: Map<string, SymbolRef>,
+  byName: Map<string, SymbolRef[]>,
+): SymbolRef | undefined {
+  const fileMatches = byFileAndName.get(`${file}:${name}`);
+  if (fileMatches?.length === 1) return fileMatches[0];
+  const qualified = byQualifiedName.get(name);
+  if (qualified) return qualified;
+  const globalMatches = byName.get(name);
+  if (globalMatches?.length === 1) return globalMatches[0];
+  return undefined;
 }

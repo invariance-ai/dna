@@ -1,14 +1,15 @@
 import type { Command } from "commander";
 import kleur from "kleur";
 import { loadInvariants, invariantsFor, formatInvariantsPretty } from "@invariance/dna-core";
+import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerInvariants(program: Command): void {
-  program
+  addRootOption(program
     .command("invariants [symbol]")
     .description("Invariants that apply to a symbol (or list all)")
-    .option("--json", "Emit JSON instead of pretty output")
-    .action(async (symbol: string | undefined, opts: { json?: boolean }) => {
-      const root = process.cwd();
+    .option("--json", "Emit JSON instead of pretty output"))
+    .action(async (symbol: string | undefined, opts: RootOption & { json?: boolean }) => {
+      const root = resolveRoot(opts);
       const all = await loadInvariants(root);
       const filtered = symbol ? invariantsFor(symbol, all) : all;
       if (opts.json) {
