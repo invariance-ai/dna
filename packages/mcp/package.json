@@ -1,10 +1,17 @@
 {
   "name": "@invariance/dna-mcp",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "MCP server for dna — exposes get_context/impact_of/tests_for/invariants_for/prepare_edit to coding agents.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/server.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit"

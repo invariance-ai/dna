@@ -7,24 +7,19 @@ import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 const AGENT_INSTRUCTIONS = `<!-- dna:start -->
 ## dna
 
-Use \`dna\` like \`rg\`: it is a local CLI for repo context before code edits.
+\`dna\` is local repo memory: symbol graph, tests, invariants, lessons, decisions, and personal preferences. Hooks auto-fire dna on session start, on prompts, before/after edits, and on failures — you usually don't need to call dna by hand. Useful manual calls:
 
-Before editing a non-trivial symbol:
 \`\`\`bash
-dna prepare <symbol> --intent "<one-line intent>"
+dna find "<keyword>"               # locate existing helpers before writing new ones
+dna context <symbol> --markdown    # plan a multi-file change
+dna decisions <symbol>             # check prior choices before re-litigating
+dna preferences                    # see the user's captured standing rules
+dna prepare <symbol> --intent "…"  # decision-ready brief if the auto-context wasn't enough
 \`\`\`
 
-When looking for existing helpers:
-\`\`\`bash
-dna find "<keyword>" --json
-\`\`\`
+When the user gives a durable instruction ("from now on…", "always…", "i prefer…", "don't ever…"), the capture-preference hook records it automatically. Treat \`dna preferences\` output as soft constraints in every session.
 
-After editing, run the tests dna recommends:
-\`\`\`bash
-dna tests <symbol> --json
-\`\`\`
-
-When the edit teaches you something durable:
+When you learn something the next agent should know, persist it:
 \`\`\`bash
 dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
 dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
@@ -96,25 +91,15 @@ export function registerInstall(program: Command): void {
       .option("--use-global", "Generate hooks that call `dna` directly (requires global install)"),
   ).action(async (opts: InstallOpts) => {
     const root = resolveRoot(opts);
-    const cmd = dnaCmd(!!opts.useGlobal);
-    const writes: Array<[string, string]> = [
-      [path.join(root, ".claude/skills/dna/SKILL.md"), DNA_SKILL],
-      [
-        path.join(root, ".claude/settings.json"),
-        JSON.stringify(claudeSettings(cmd), null, 2) + "\n",
-      ],
-    ];
-
-    for (const [file, content] of writes) {
-      await writeManagedFile(root, file, content, !!opts.force);
-    }
-
-    if (!opts.skipClaudeMd) await upsertAgentMd(root, "CLAUDE.md");
-
+    await runInstallClaude(root, {
+      force: !!opts.force,
+      skipClaudeMd: !!opts.skipClaudeMd,
+      useGlobal: !!opts.useGlobal,
+    });
     console.log("");
     console.log(kleur.green("installed") + " Claude Code CLI-first dna integration");
-    console.log(kleur.dim(`Hooks call: ${cmd}`));
-    console.log(kleur.dim("Next: run `dna index`, then Claude Code can shell out to dna like rg."));
+    console.log(kleur.dim(`Hooks call: ${dnaCmd(!!opts.useGlobal)}`));
+    console.log(kleur.dim("Hooks fire on session start, prompts, edits, and failures."));
   });
 
   addRootOption(
@@ -126,17 +111,49 @@ export function registerInstall(program: Command): void {
       .option("--use-global", "Configure Codex to call `dna` directly (requires global install)"),
   ).action(async (opts: CodexInstallOpts) => {
     const root = resolveRoot(opts);
-    const cmd = dnaCmd(!!opts.useGlobal);
-
-    if (!opts.skipAgentsMd) await upsertAgentMd(root, "AGENTS.md");
-
-    await upsertCodexConfig(root, cmd, !!opts.useGlobal);
-
+    await runInstallCodex(root, {
+      force: !!opts.force,
+      skipAgentsMd: !!opts.skipAgentsMd,
+      useGlobal: !!opts.useGlobal,
+    });
     console.log("");
     console.log(kleur.green("installed") + " Codex CLI dna integration");
-    console.log(kleur.dim(`Notify hook + MCP server use: ${cmd}`));
+    console.log(kleur.dim(`Notify hook + MCP server use: ${dnaCmd(!!opts.useGlobal)}`));
     console.log(kleur.dim("Codex CLI has no PreToolUse hook; AGENTS.md teaches it to run `dna prepare` like `rg`."));
   });
+}
+
+export interface RunInstallClaudeOpts {
+  force: boolean;
+  skipClaudeMd: boolean;
+  useGlobal?: boolean;
+}
+
+export async function runInstallClaude(root: string, opts: RunInstallClaudeOpts): Promise<void> {
+  const cmd = dnaCmd(!!opts.useGlobal);
+  const writes: Array<[string, string]> = [
+    [path.join(root, ".claude/skills/dna/SKILL.md"), DNA_SKILL],
+    [
+      path.join(root, ".claude/settings.json"),
+      JSON.stringify(claudeSettings(cmd), null, 2) + "\n",
+    ],
+  ];
+  for (const [file, content] of writes) {
+    await writeManagedFile(root, file, content, opts.force);
+  }
+  if (!opts.skipClaudeMd) await upsertAgentMd(root, "CLAUDE.md");
+}
+
+export interface RunInstallCodexOpts {
+  force: boolean;
+  skipAgentsMd: boolean;
+  useGlobal?: boolean;
+}
+
+export async function runInstallCodex(root: string, opts: RunInstallCodexOpts): Promise<void> {
+  const cmd = dnaCmd(!!opts.useGlobal);
+  if (!opts.skipAgentsMd) await upsertAgentMd(root, "AGENTS.md");
+  await upsertCodexConfig(root, cmd, !!opts.useGlobal);
 }
 
 async function writeManagedFile(
@@ -192,12 +209,27 @@ function claudeSettings(cmd: string): unknown {
     `${cmd} record-failure --kind bash --message "exit \${CLAUDE_TOOL_EXIT_CODE:-?}"${silent}; fi`;
   return {
     hooks: {
+      SessionStart: [
+        {
+          matcher: "startup|resume",
+          hooks: [
+            {
+              type: "command",
+              command:
+                `${cmd} index --root "$PWD"${silent}; ` +
+                `${cmd} preferences --root "$PWD" --markdown 2>/dev/null || true`,
+            },
+          ],
+        },
+      ],
       UserPromptSubmit: [
         {
           hooks: [
             {
               type: "command",
-              command: `${cmd} context-from-prompt --root "$PWD" 2>/dev/null || true`,
+              command:
+                `${cmd} capture-preference --root "$PWD" --emit 2>/dev/null || true; ` +
+                `${cmd} context-from-prompt --root "$PWD" 2>/dev/null || true`,
             },
           ],
         },
