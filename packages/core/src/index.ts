@@ -12,3 +12,4 @@ export * from "./format.js";
 export * from "./gh.js";
 export * from "./promote.js";
 export * from "./preferences.js";
+export * from "./features.js";

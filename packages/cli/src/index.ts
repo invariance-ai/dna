@@ -28,6 +28,7 @@ import { registerWizard } from "./commands/wizard.js";
 import { registerPrefer } from "./commands/prefer.js";
 import { registerPreferences } from "./commands/preferences.js";
 import { registerCapturePreference } from "./commands/capture-preference.js";
+import { registerFeature } from "./commands/feature.js";
 
 const program = new Command()
   .name("dna")
@@ -40,6 +41,7 @@ registerInstall(program);
 registerPrefer(program);
 registerPreferences(program);
 registerCapturePreference(program);
+registerFeature(program);
 registerIndex(program);
 registerPrepare(program);
 registerContext(program);

@@ -4,6 +4,8 @@ import {
   loadInvariants,
   invariantsFor,
   readIndex,
+  loadFeatures,
+  matchFeaturesInPrompt,
 } from "@invariance/dna-core";
 import type { SymbolRef } from "@invariance/dna-schemas";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
@@ -88,6 +90,31 @@ export function registerContextFromPrompt(program: Command): void {
     if (candidates.length === 0) return;
 
     const matches = new Map<string, { sym: SymbolRef; score: number }>();
+
+    // Feature-alias matches: if the prompt mentions a known feature label or
+    // alias, hydrate the top symbols of that feature with maximum score so
+    // they're prioritised alongside explicit symbol mentions.
+    try {
+      const featuresFile = await loadFeatures(root);
+      const hitLabels = matchFeaturesInPrompt(text, featuresFile.features);
+      const symbolsById = new Map<string, SymbolRef>();
+      for (const sym of index.symbols) if (sym.id) symbolsById.set(sym.id, sym);
+      for (const label of hitLabels) {
+        const feature = featuresFile.features[label];
+        if (!feature) continue;
+        for (const fs of feature.symbols.slice(0, opts.limit)) {
+          const sym = symbolsById.get(fs.id);
+          if (!sym) continue;
+          const key = sym.qualified_name ?? sym.name;
+          const score = 90 + Math.round(fs.weight * 10);
+          const prev = matches.get(key);
+          if (!prev || score > prev.score) matches.set(key, { sym, score });
+        }
+      }
+    } catch {
+      /* features unavailable — proceed with prompt-extracted candidates only */
+    }
+
     for (const cand of candidates) {
       let best: { sym: SymbolRef; score: number } | null = null;
       for (const sym of index.symbols) {

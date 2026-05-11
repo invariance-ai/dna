@@ -124,6 +124,33 @@ export const Preference = z.object({
 });
 export type Preference = z.infer<typeof Preference>;
 
+/* ---------- Features (v0.4) ---------- */
+
+export const FeatureSymbol = z.object({
+  id: z.string(),
+  weight: z.number().min(0).max(1),
+  edits: z.number().int().nonnegative().default(0),
+  reads: z.number().int().nonnegative().default(0),
+  last_touched: z.string(),
+});
+export type FeatureSymbol = z.infer<typeof FeatureSymbol>;
+
+export const Feature = z.object({
+  label: z.string(),
+  aliases: z.array(z.string()).default([]),
+  symbols: z.array(FeatureSymbol).default([]),
+  sessions: z.number().int().nonnegative().default(0),
+  created_at: z.string(),
+  last_active: z.string(),
+});
+export type Feature = z.infer<typeof Feature>;
+
+export const FeaturesFile = z.object({
+  version: z.literal(1),
+  features: z.record(z.string(), Feature).default({}),
+});
+export type FeaturesFile = z.infer<typeof FeaturesFile>;
+
 /* ---------- Tool I/O ---------- */
 
 export const Strand = z.enum(["structural", "tests", "provenance", "invariants"]);

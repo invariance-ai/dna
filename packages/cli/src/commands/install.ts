@@ -24,6 +24,8 @@ When you learn something the next agent should know, persist it:
 dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
 dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
 \`\`\`
+
+**Tag the session early.** When you understand what the user is working on (e.g. "the homepage", "the auth flow"), call \`dna feature use <short-kebab-label>\` once. Use the exact label if the user names a known feature; otherwise pick a short kebab-case label. dna then learns which symbols belong to that feature and surfaces them automatically on future sessions that mention the same label.
 <!-- dna:end -->
 `;
 
@@ -217,6 +219,7 @@ function claudeSettings(cmd: string): unknown {
               type: "command",
               command:
                 `${cmd} index --root "$PWD"${silent}; ` +
+                `${cmd} feature clear-active --root "$PWD"${silent}; ` +
                 `${cmd} preferences --root "$PWD" --markdown 2>/dev/null || true`,
             },
           ],
@@ -261,7 +264,9 @@ function claudeSettings(cmd: string): unknown {
           hooks: [
             {
               type: "command",
-              command: `${cmd} attach --transcript -${silent}`,
+              command:
+                `${cmd} attach --transcript -${silent}; ` +
+                `${cmd} feature attribute --git-diff --root "$PWD"${silent}`,
             },
           ],
         },
