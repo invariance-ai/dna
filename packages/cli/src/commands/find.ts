@@ -17,9 +17,13 @@ export function registerFind(program: Command): void {
         const scored = index.symbols
           .map((s) => {
             const name = s.name.toLowerCase();
+            const qualified = s.qualified_name?.toLowerCase();
             let score = 0;
-            if (name === q) score = 100;
+            if (qualified === q) score = 100;
+            else if (name === q) score = 95;
+            else if (qualified?.startsWith(q)) score = 85;
             else if (name.startsWith(q)) score = 80;
+            else if (qualified?.includes(q)) score = 65;
             else if (name.includes(q)) score = 60;
             else return null;
             return { s, score };

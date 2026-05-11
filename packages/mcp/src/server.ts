@@ -93,9 +93,13 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         .map((s) => {
           if (a.kind && s.kind !== a.kind) return null;
           const n = s.name.toLowerCase();
+          const qn = s.qualified_name?.toLowerCase();
           let score = 0;
-          if (n === q) score = 1;
+          if (qn === q) score = 1;
+          else if (n === q) score = 0.95;
+          else if (qn?.startsWith(q)) score = 0.85;
           else if (n.startsWith(q)) score = 0.8;
+          else if (qn?.includes(q)) score = 0.65;
           else if (n.includes(q)) score = 0.6;
           else return null;
           return { symbol: s, score };
