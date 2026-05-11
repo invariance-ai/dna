@@ -6,13 +6,20 @@ import type {
   ProvenanceEntry,
 } from "@invariance/dna-schemas";
 
+// Auto-strip ANSI when piped (agents shelling out via Bash) or NO_COLOR is set.
+// Set DNA_FORCE_COLOR=1 to override.
+const useColor =
+  process.env.DNA_FORCE_COLOR === "1" ||
+  (!process.env.NO_COLOR && !!process.stdout.isTTY);
+const w = (code: string) => (s: string) =>
+  useColor ? `\x1b[${code}m${s}\x1b[0m` : s;
 const c = {
-  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
-  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-  yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
-  green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-  cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
+  bold: w("1"),
+  dim: w("2"),
+  red: w("31"),
+  yellow: w("33"),
+  green: w("32"),
+  cyan: w("36"),
 };
 
 const riskColor: Record<string, (s: string) => string> = {
@@ -20,6 +27,70 @@ const riskColor: Record<string, (s: string) => string> = {
   medium: c.yellow,
   low: c.green,
 };
+
+export function formatContextMarkdown(r: ContextResult): string {
+  const L: string[] = [];
+  L.push(`# ${r.symbol.name}`);
+  L.push("");
+  L.push(`**Defined in:** \`${r.symbol.file}:${r.symbol.line}\` (${r.symbol.kind})`);
+  L.push(`**Risk:** ${r.risk.toUpperCase()}`);
+  L.push("");
+  if (r.callers.length) {
+    L.push("## Called by");
+    for (const x of r.callers.slice(0, 10)) L.push(`- \`${x.name}\` — ${x.file}:${x.line}`);
+    if (r.callers.length > 10) L.push(`- …and ${r.callers.length - 10} more`);
+    L.push("");
+  }
+  if (r.callees.length) {
+    L.push("## Calls");
+    for (const x of r.callees.slice(0, 10)) L.push(`- \`${x.name}\` — ${x.file}:${x.line}`);
+    L.push("");
+  }
+  if (r.tests.length) {
+    L.push("## Tests");
+    for (const t of r.tests) L.push(`- \`${t.file}\` (${t.framework})`);
+    L.push("");
+  }
+  if (r.invariants.length) {
+    L.push("## Invariants");
+    for (const inv of r.invariants) {
+      L.push(`- **${inv.name}** (${inv.severity}) — ${inv.rule}`);
+      if (inv.evidence.length) L.push(`  - evidence: ${inv.evidence.join(", ")}`);
+    }
+    L.push("");
+  }
+  if (r.provenance.length) {
+    L.push("## Recent changes");
+    for (const p of r.provenance.slice(0, 5))
+      L.push(`- \`${p.commit}\` ${p.date.slice(0, 10)} ${p.author}: ${p.message}`);
+    L.push("");
+  }
+  return L.join("\n");
+}
+
+export function formatImpactMarkdown(r: ImpactResult): string {
+  const L: string[] = [];
+  L.push(`# Impact: ${r.symbol.name}`);
+  L.push("");
+  L.push(`**Blast radius:** ${r.blast_radius}`);
+  L.push("");
+  if (r.affected_symbols.length) {
+    L.push("## Affected symbols");
+    for (const s of r.affected_symbols) L.push(`- \`${s.name}\` — ${s.file}:${s.line}`);
+    L.push("");
+  }
+  if (r.affected_files.length) {
+    L.push("## Affected files");
+    for (const f of r.affected_files) L.push(`- \`${f}\``);
+    L.push("");
+  }
+  if (r.affected_tests.length) {
+    L.push("## Tests to run");
+    for (const t of r.affected_tests) L.push(`- \`${t.file}\` (${t.framework})`);
+    L.push("");
+  }
+  return L.join("\n");
+}
 
 export function formatContextPretty(r: ContextResult): string {
   const L: string[] = [];

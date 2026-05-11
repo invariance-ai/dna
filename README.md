@@ -2,7 +2,7 @@
 
 > Codebase context for coding agents.
 
-`dna` gives Claude Code, Codex, Cursor — any MCP-compatible agent — a compact, evidence-backed map of your repo before it changes code. Symbols, callers and callees, tests that protect each function, recent git history, and **declarative invariants you author once** (e.g. "refunds over $1000 require finance approval"). Exposed as a CLI for humans and an MCP server for agents, backed by a single shared schema so the two surfaces never drift.
+`dna` gives Claude Code, Codex, Cursor — any coding agent — a compact, evidence-backed map of your repo before it changes code. Symbols, callers and callees, tests that protect each function, recent git history, and **declarative invariants you author once** (e.g. "refunds over $1000 require finance approval"). Two surfaces, same backend: an **MCP server** for agents that call tools natively, and a **CLI** for agents that shell out via Bash (or for humans inspecting the same data). Backed by a single shared schema, so the surfaces cannot drift.
 
 The thesis: structural call-graph context is now commodity (Sourcegraph, Aider repomap, Sverklo, CodeGraph, and ~8 other MCP servers all ship it). What still isn't is **invariants as a first-class agent-callable strand** — declarative rules with evidence pointers that say *what an agent must not break* before it touches a symbol. Pair that with a one-shot `prepare_edit` brief that combines structure + tests + invariants + risk, and the agent gets a decision-ready bundle, not a pile of chunks. That's the wedge `dna` is built around.
 
@@ -30,7 +30,25 @@ dna index --watch                                     # rebuild on changes
 dna serve                                             # MCP stdio server
 ```
 
-All commands accept `--json` for machine output.
+All commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when stdout isn't a TTY, so piped output is clean.
+
+## For agents shelling out
+
+Claude Code and Codex agents already have Bash. Tell them about `dna` and they can use it without any MCP wiring:
+
+```text
+You have access to `dna`, a CLI that returns structured repo context.
+Before editing any non-trivial symbol, run:
+  dna prepare <symbol> --intent "<one-line description>"
+
+To check what tests to run after:
+  dna tests <symbol> --json
+
+To find existing helpers before adding new ones:
+  dna find "<keyword>" --json
+```
+
+The MCP server (`dna serve`) is the same code path — pick whichever surface the agent works best in.
 
 ## What you get
 
