@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import kleur from "kleur";
-import { prepareEdit } from "@invariance/dna-core";
+import { prepareEdit, recordPrepared } from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerPrepare(program: Command): void {
@@ -11,7 +11,9 @@ export function registerPrepare(program: Command): void {
     .option("--json", "Emit JSON instead of markdown"))
     .action(async (symbol: string, opts: RootOption & { intent: string; json?: boolean }) => {
       try {
-        const r = await prepareEdit({ symbol, intent: opts.intent }, resolveRoot(opts));
+        const root = resolveRoot(opts);
+        const r = await prepareEdit({ symbol, intent: opts.intent }, root);
+        await recordPrepared(root, symbol).catch(() => {});
         if (opts.json) console.log(JSON.stringify(r, null, 2));
         else console.log(r.markdown);
       } catch (e) {

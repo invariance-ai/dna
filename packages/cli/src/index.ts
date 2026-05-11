@@ -22,6 +22,8 @@ import { registerPostmortem } from "./commands/postmortem.js";
 import { registerPromote } from "./commands/promote.js";
 import { registerAttach } from "./commands/attach.js";
 import { registerPrIntent } from "./commands/pr-intent.js";
+import { registerContextFromPrompt } from "./commands/context-from-prompt.js";
+import { registerRecordFailure } from "./commands/record-failure.js";
 
 const program = new Command()
   .name("dna")
@@ -50,6 +52,8 @@ registerFind(program);
 registerTrace(program);
 registerServe(program);
 registerBench(program);
+registerContextFromPrompt(program);
+registerRecordFailure(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);
