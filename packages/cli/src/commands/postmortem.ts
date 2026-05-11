@@ -24,6 +24,7 @@ interface Opts extends RootOption {
   prBody?: string;
   testOutput?: string;
   dryRun?: boolean;
+  callApi?: boolean;
   appendWithoutConfirm?: boolean;
   apiKey?: string;
   model?: string;
@@ -51,7 +52,8 @@ export function registerPostmortem(program: Command): void {
         "--test-output <path>",
         "Path to failing test output (optional, improves rule quality)",
       )
-      .option("--dry-run", "Render the prompt without calling the API")
+      .option("--dry-run", "Render the prompt for a native agent (default)")
+      .option("--call-api", "Call the bundled Anthropic client instead of printing a prompt")
       .option(
         "--append-without-confirm",
         "Skip the interactive confirmation and append directly",
@@ -104,7 +106,7 @@ export function registerPostmortem(program: Command): void {
       const llm = new DnaLlm({
         apiKey: opts.apiKey,
         model: opts.model,
-        dryRun: !!opts.dryRun,
+        dryRun: !opts.callApi || !!opts.dryRun,
       });
       const result = await proposeInvariant(llm, {
         pr_number: prNumber,
@@ -115,13 +117,15 @@ export function registerPostmortem(program: Command): void {
         symbols_touched: symbols,
       });
 
-      if (opts.dryRun) {
-        console.log(kleur.bold("Dry-run — prompt only:"));
+      if (!opts.callApi || opts.dryRun) {
+        console.log(kleur.bold("Prompt for native Claude/Codex:"));
         console.log("");
         console.log(kleur.dim("--- system ---"));
         console.log(result.dry_run_prompt!.system);
         console.log(kleur.dim("--- user ---"));
         console.log(result.dry_run_prompt!.user);
+        console.log("");
+        console.log(kleur.dim("Have the native agent return YAML, then paste it into .dna/invariants.yml or record it with dna invariants tooling."));
         return;
       }
 

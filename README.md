@@ -27,9 +27,9 @@ dna only surfaces the slice attached to the symbol being edited. The graph does 
 npm install -g @invariance/dna
 cd your-repo
 dna init                              # writes .dna/config.yml + .dna/invariants.yml
+dna install claude                    # writes CLI-first CLAUDE.md + .claude skill/hooks
 dna index                             # builds the symbol graph (.dna/index/symbols.json)
 dna learn-todos                       # bootstrap notes from existing TODO/FIXME comments
-claude mcp add dna -- dna serve       # expose to Claude Code
 ```
 
 ## CLI
@@ -66,9 +66,17 @@ dna suggest                                           # surface symbols agents a
 
 All read commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when piped.
 
-## For agents shelling out
+## Claude Code and Codex: CLI first
 
-Claude Code and Codex agents already have Bash — they can use dna without any MCP wiring. Add to `CLAUDE.md`:
+Claude Code and Codex agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
+
+For Claude Code, install the project instructions, skill, and non-blocking pre-edit index hook:
+
+```bash
+dna install claude
+```
+
+For Codex or any shell-based agent, add this to the repo instructions:
 
 ```text
 You have access to `dna`, a CLI that returns structured repo context.
@@ -83,7 +91,7 @@ To check what tests to run after editing:
   dna tests <symbol> --json
 ```
 
-The MCP server (`dna serve`) is the same code path — pick whichever surface the agent works best in.
+MCP is optional. `dna serve` exposes the same backend for tool-native clients, but the CLI is the surface to optimize first.
 
 ## Anchored memory in action
 
@@ -173,21 +181,26 @@ Notes "deflate" over time — recurring ones get promoted to invariants, and dna
 
 See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates (~82% fewer exploration tokens, ~53% fewer regressions vs grep-only across 30 simulated tasks).
 
-## LLM-assisted commands (optional, set `ANTHROPIC_API_KEY`)
+## Native-agent prompt commands
 
-A few commands ask Claude to do work — these need an Anthropic API key. They're optional; everything else runs purely locally.
+`dna` does not need to own the LLM runtime. For Claude Code and Codex, commands that need reasoning print a prompt package by default; the native agent answers using its own model/session, and `dna` records the resulting YAML or command.
 
 ```bash
-# Propose an invariant from a regression PR (uses gh CLI for diff + body)
+# Propose an invariant from a regression PR (prints a native-agent prompt)
 dna postmortem --pr 1287
-dna postmortem --pr 1287 --dry-run                  # see the prompt; no API call
 dna postmortem --diff-file my.diff --symbol createRefund   # offline alternative
 
 # Find clusters of similar notes that should become invariants
 dna promote createRefund                            # rule-based, no API key needed
+
+# Distill a conversation transcript into Decision records
+dna attach --transcript path/to/transcript.txt --symbol createRefund --session "PR-1287"
+
+# Extract Decision records from a PR's description, reviews, and comments
+dna pr-intent --pr 1287
 ```
 
-Set `ANTHROPIC_API_KEY` in your environment, or pass `--api-key`. Default model is `claude-opus-4-7` with adaptive thinking; override via `--model` if you want.
+API execution is an explicit opt-in for automation: pass `--call-api` plus `ANTHROPIC_API_KEY` or `--api-key`. The default path is native Claude/Codex.
 
 ## Status
 
