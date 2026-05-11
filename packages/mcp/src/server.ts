@@ -21,7 +21,19 @@ import {
   loadDecisions,
   appendDecision,
   rankDecisions,
+  recordObservation,
+  suggest as suggestImpl,
 } from "@invariance/dna-core";
+
+const OBSERVE = process.env.DNA_OBSERVE === "1";
+
+function symbolFor(args: unknown): string | undefined {
+  if (typeof args === "object" && args && "symbol" in args) {
+    const s = (args as { symbol: unknown }).symbol;
+    return typeof s === "string" ? s : undefined;
+  }
+  return undefined;
+}
 
 /**
  * Tool metadata flows from @invariance/dna-schemas so CLI flags, MCP tool I/O,
@@ -47,6 +59,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const def = TOOLS[name];
   if (!def) throw new Error(`Unknown tool: ${name}`);
   const parsed = def.input.parse(args);
+  if (OBSERVE) {
+    // Fire-and-forget: never block the response on observation IO.
+    void recordObservation(process.cwd(), name, symbolFor(parsed)).catch(() => {
+      /* swallow */
+    });
+  }
   const result = await dispatch(name, parsed);
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 });
@@ -97,6 +115,10 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const a = args as { symbol: string };
       const decisions = rankDecisions(await loadDecisions(root, a.symbol), Number.POSITIVE_INFINITY);
       return { symbol: a.symbol, decisions };
+    }
+    case "suggest": {
+      const a = args as Parameters<typeof suggestImpl>[1];
+      return { suggestions: await suggestImpl(root, a) };
     }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };

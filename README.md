@@ -54,7 +54,15 @@ dna decisions <symbol>                                # choices recorded, with r
 # Server
 dna index --watch                                     # rebuild on changes
 dna serve                                             # MCP stdio server
+dna serve --observe                                   # ⚡ opt-in: record per-symbol query counts (metadata only)
+dna suggest                                           # surface symbols agents ask about repeatedly with no covering invariant
 ```
+
+### Passive observer — opt-in, metadata only
+
+`dna serve --observe` records *which symbol was queried* and *when*, into `.dna/observations.json`. **Nothing else.** No tool arguments beyond the symbol name, no tool results, no conversation content. The privacy line: dna never persists what an agent asked or what it received — only that `createRefund` was looked at 6 times this week.
+
+`dna suggest` reads those counts and surfaces the symbols agents touch a lot that have no covering invariant. The agent's repeated confusion becomes the **authoring queue** — what's worth writing an invariant or note for next.
 
 All read commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when piped.
 

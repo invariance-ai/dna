@@ -7,6 +7,7 @@ build/
 .env.local
 .dna/index/
 .dna/cache/
+.dna/observations.json
 coverage/
 *.log
 .turbo/
