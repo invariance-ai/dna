@@ -5,6 +5,7 @@ export * from "./git.js";
 export * from "./invariants.js";
 export * from "./notes.js";
 export * from "./decisions.js";
+export * from "./observer.js";
 export * from "./tests.js";
 export * from "./query.js";
 export * from "./format.js";

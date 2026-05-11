@@ -5,8 +5,12 @@ export function registerServe(program: Command): void {
   program
     .command("serve")
     .description("Start the dna MCP server (stdio)")
-    .action(async () => {
-      // Lazy import: only load MCP deps when serving.
+    .option(
+      "--observe",
+      "Record per-symbol query counts to .dna/observations.json (metadata only — symbol name, count, timestamp; never tool arguments or results)",
+    )
+    .action(async (opts: { observe?: boolean }) => {
+      if (opts.observe) process.env.DNA_OBSERVE = "1";
       try {
         await import("@invariance/dna-mcp/dist/server.js");
       } catch (e) {

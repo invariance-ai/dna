@@ -205,6 +205,23 @@ export const DecisionsForResult = z.object({
 });
 export type DecisionsForResult = z.infer<typeof DecisionsForResult>;
 
+export const SuggestInput = z.object({
+  min_count: z.number().int().min(1).default(3),
+  limit: z.number().int().min(1).max(100).default(10),
+});
+export type SuggestInput = z.infer<typeof SuggestInput>;
+export const Suggestion = z.object({
+  symbol: z.string(),
+  count: z.number().int().nonnegative(),
+  last_queried: z.string(),
+  reason: z.enum(["no_invariant", "no_note", "high_traffic"]),
+});
+export type Suggestion = z.infer<typeof Suggestion>;
+export const SuggestResult = z.object({
+  suggestions: z.array(Suggestion),
+});
+export type SuggestResult = z.infer<typeof SuggestResult>;
+
 export const FindReusableInput = z.object({
   query: z.string(),
   kind: SymbolKind.optional(),
@@ -294,6 +311,12 @@ export const TOOLS = {
     description: "Decisions previously recorded for a symbol.",
     input: DecisionsForInput,
     output: DecisionsForResult,
+  },
+  suggest: {
+    description:
+      "Authoring queue: symbols agents have queried frequently that have no covering invariant. Use to find what's worth documenting next.",
+    input: SuggestInput,
+    output: SuggestResult,
   },
 } as const;
 
