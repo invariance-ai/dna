@@ -67,6 +67,15 @@ export function formatContextMarkdown(r: ContextResult): string {
     }
     L.push("");
   }
+  if (r.decisions.length) {
+    L.push("## Past decisions");
+    for (const d of r.decisions) {
+      L.push(`- **${d.decision}**`);
+      if (d.rejected_alternative) L.push(`  - rejected: ${d.rejected_alternative}`);
+      if (d.rationale) L.push(`  - rationale: ${d.rationale}`);
+    }
+    L.push("");
+  }
   if (r.provenance.length) {
     L.push("## Recent changes");
     for (const p of r.provenance.slice(0, 5))
@@ -136,6 +145,15 @@ export function formatContextPretty(r: ContextResult): string {
     for (const n of r.notes) {
       L.push(`  - ${c.dim(`[${n.severity}]`)} ${n.lesson}`);
       if (n.evidence) L.push(c.dim(`    evidence: ${n.evidence}`));
+    }
+    L.push("");
+  }
+  if (r.decisions.length) {
+    L.push(c.bold("Past decisions:"));
+    for (const d of r.decisions) {
+      L.push(`  - ${d.decision}`);
+      if (d.rejected_alternative) L.push(c.dim(`    rejected: ${d.rejected_alternative}`));
+      if (d.rationale) L.push(c.dim(`    rationale: ${d.rationale}`));
     }
     L.push("");
   }

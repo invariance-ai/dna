@@ -14,6 +14,8 @@ import { registerPrepare } from "./commands/prepare.js";
 import { registerLearn } from "./commands/learn.js";
 import { registerNotes } from "./commands/notes.js";
 import { registerLearnTodos } from "./commands/learn-todos.js";
+import { registerDecide } from "./commands/decide.js";
+import { registerDecisions } from "./commands/decisions.js";
 
 const program = new Command()
   .name("dna")
@@ -27,6 +29,8 @@ registerContext(program);
 registerLearn(program);
 registerNotes(program);
 registerLearnTodos(program);
+registerDecide(program);
+registerDecisions(program);
 registerImpact(program);
 registerTests(program);
 registerInvariants(program);
