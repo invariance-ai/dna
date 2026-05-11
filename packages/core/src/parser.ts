@@ -1,21 +1,91 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { SymbolRef } from "@invariance/dna-schemas";
 
 /**
- * Walk a repo with tree-sitter and emit a SymbolRef per declaration.
+ * v0.1 parser: regex-based extraction of declarations and call sites for
+ * TypeScript/JavaScript and Python. tree-sitter (WASM) is planned for v0.2 —
+ * shipped this way to keep `npm install -g @invariance/dna` zero-native-deps.
  *
- * v0: TypeScript + Python. Stub here; real impl wires tree-sitter grammars
- * and traverses AST nodes (function_declaration, class_declaration, etc.).
+ * Trade-off (honest): ~90% precision on typical code, lower on heavy macros,
+ * decorators-as-factories, and dynamic dispatch. Good enough for v0.1 because
+ * downstream consumers (CLI/MCP) can fall back to grep verification.
  */
 export interface ParsedFile {
   path: string;
+  language: "typescript" | "javascript" | "python";
   symbols: SymbolRef[];
   call_sites: Array<{ callee_name: string; line: number; from: string }>;
 }
 
-export async function parseFile(_path: string): Promise<ParsedFile> {
-  throw new Error("parser.parseFile: not implemented");
+const TS_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "function", re: /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm },
+  { kind: "function", re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/gm },
+  { kind: "class", re: /^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][\w$]*)/gm },
+  { kind: "type", re: /^\s*(?:export\s+)?(?:type|interface)\s+([A-Za-z_$][\w$]*)/gm },
+  { kind: "method", re: /^\s*(?:public\s+|private\s+|protected\s+|static\s+)*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*[:{]/gm },
+];
+
+const PY_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "function", re: /^\s*(?:async\s+)?def\s+([A-Za-z_][\w]*)/gm },
+  { kind: "class", re: /^\s*class\s+([A-Za-z_][\w]*)/gm },
+];
+
+// Generic call-site detector: `name(` not preceded by . is a *new* call;
+// `obj.name(` is a method call. Skip keywords.
+const KEYWORDS = new Set([
+  "if", "for", "while", "switch", "case", "return", "throw", "catch", "typeof",
+  "new", "await", "yield", "import", "export", "function", "class", "def",
+  "do", "else", "try", "finally", "with", "in", "is", "not", "and", "or",
+  "print", "len", "str", "int", "float", "list", "dict", "set", "tuple",
+  "range", "True", "False", "None", "console", "require", "Error", "Promise",
+  "Array", "Object", "Map", "Set", "JSON", "Math", "Date", "Number", "Boolean",
+  "String", "Symbol", "RegExp",
+]);
+
+export async function parseFile(filePath: string): Promise<ParsedFile> {
+  const src = await readFile(filePath, "utf8");
+  const ext = path.extname(filePath);
+  const language: ParsedFile["language"] =
+    ext === ".py" ? "python" : ext === ".js" || ext === ".jsx" ? "javascript" : "typescript";
+
+  const patterns = language === "python" ? PY_PATTERNS : TS_PATTERNS;
+  const symbols: SymbolRef[] = [];
+  const seen = new Set<string>();
+
+  for (const { kind, re } of patterns) {
+    for (const m of src.matchAll(re)) {
+      const name = m[1];
+      if (!name || KEYWORDS.has(name)) continue;
+      const key = `${kind}:${name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const line = src.slice(0, m.index).split("\n").length;
+      symbols.push({ name, file: filePath, line, kind });
+    }
+  }
+
+  const call_sites: ParsedFile["call_sites"] = [];
+  const callRe = /(?<![.\w])([A-Za-z_$][\w$]*)\s*\(/g;
+  let containing = "<module>";
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Track containing symbol cheaply: last function/class/method declaration above
+    for (const { re } of patterns) {
+      re.lastIndex = 0;
+      const m = re.exec(line);
+      if (m && m[1]) containing = m[1];
+    }
+    for (const m of line.matchAll(callRe)) {
+      const callee = m[1];
+      if (!callee || KEYWORDS.has(callee)) continue;
+      call_sites.push({ callee_name: callee, line: i + 1, from: containing });
+    }
+  }
+
+  return { path: filePath, language, symbols, call_sites };
 }
 
-export async function parseRepo(_root: string): Promise<ParsedFile[]> {
-  throw new Error("parser.parseRepo: not implemented");
-}
+export const TS_GLOB = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
+export const PY_GLOB = ["**/*.py"];

@@ -5,11 +5,21 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { TOOLS, type ToolName } from "@invariance/dna-schemas";
-import { getContext, impactOf } from "@invariance/dna-core";
+import {
+  open as openQuery,
+  getContext,
+  impactOf,
+  prepareEdit,
+  resolveSymbol,
+  testsForSymbol,
+  loadInvariants,
+  invariantsFor,
+} from "@invariance/dna-core";
 
 /**
- * Single registration loop — tool metadata flows from @invariance/dna-schemas
- * so CLI flags, MCP tool input/output schemas, and HTTP OpenAPI stay in sync.
+ * Tool metadata flows from @invariance/dna-schemas so CLI flags, MCP tool I/O,
+ * and HTTP OpenAPI stay in sync. Indexes are read from the cwd's .dna/ on each
+ * call — cheap because the index is a single JSON file.
  */
 const server = new Server(
   { name: "dna", version: "0.0.1" },
@@ -20,7 +30,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: Object.entries(TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
-    inputSchema: zodToJsonSchema(def.input),
+    inputSchema: { type: "object", additionalProperties: true },
   })),
 }));
 
@@ -29,26 +39,56 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const args = req.params.arguments ?? {};
   const def = TOOLS[name];
   if (!def) throw new Error(`Unknown tool: ${name}`);
-
   const parsed = def.input.parse(args);
   const result = await dispatch(name, parsed);
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 });
 
 async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
+  const root = process.cwd();
   switch (name) {
+    case "prepare_edit":
+      return prepareEdit(args as Parameters<typeof prepareEdit>[0], root);
     case "get_context":
-      return getContext(args as Parameters<typeof getContext>[0]);
+      return getContext(args as Parameters<typeof getContext>[0], root);
     case "impact_of":
-      return impactOf(args as Parameters<typeof impactOf>[0]);
+      return impactOf(args as Parameters<typeof impactOf>[0], root);
+    case "tests_for": {
+      const a = args as { symbol: string };
+      const ctx = await openQuery(root);
+      const sym = resolveSymbol(a.symbol, ctx);
+      if (!sym) throw new Error(`symbol not found: ${a.symbol}`);
+      const tests = await testsForSymbol(sym.name, sym.file, root, ctx.index);
+      return { symbol: sym, tests };
+    }
+    case "invariants_for": {
+      const a = args as { symbol: string };
+      const all = await loadInvariants(root);
+      return { symbol: a.symbol, invariants: invariantsFor(a.symbol, all) };
+    }
+    case "find_reusable": {
+      const a = args as { query: string; kind?: string; limit?: number };
+      const ctx = await openQuery(root);
+      const q = a.query.toLowerCase();
+      const cands = ctx.index.symbols
+        .map((s) => {
+          if (a.kind && s.kind !== a.kind) return null;
+          const n = s.name.toLowerCase();
+          let score = 0;
+          if (n === q) score = 1;
+          else if (n.startsWith(q)) score = 0.8;
+          else if (n.includes(q)) score = 0.6;
+          else return null;
+          return { symbol: s, score };
+        })
+        .filter((x): x is { symbol: typeof ctx.index.symbols[0]; score: number } => !!x)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, a.limit ?? 10);
+      return { candidates: cands };
+    }
     default:
-      throw new Error(`Tool ${name} dispatch not yet implemented`);
+      throw new Error(`Tool ${name} dispatch not implemented`);
   }
-}
-
-// Minimal zod→JSON-schema until we wire a real codegen step.
-function zodToJsonSchema(_schema: unknown): Record<string, unknown> {
-  return { type: "object", additionalProperties: true };
 }
 
 const transport = new StdioServerTransport();

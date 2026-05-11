@@ -1,15 +1,19 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { Invariant } from "@invariance/dna-schemas";
 
-/**
- * Load `.dna/invariants.yml`. Tolerant of array-at-root or {invariants: [...]}.
- */
-export async function loadInvariants(path: string): Promise<Invariant[]> {
-  const raw = await readFile(path, "utf8");
-  const data = parseYaml(raw);
-  const items = Array.isArray(data) ? data : (data?.invariants ?? []);
-  return items.map((i: unknown) => Invariant.parse(i));
+const REL = ".dna/invariants.yml";
+
+export async function loadInvariants(root: string): Promise<Invariant[]> {
+  try {
+    const raw = await readFile(path.join(root, REL), "utf8");
+    const data = parseYaml(raw);
+    const items = Array.isArray(data) ? data : (data?.invariants ?? []);
+    return items.map((i: unknown) => Invariant.parse(i));
+  } catch {
+    return [];
+  }
 }
 
 export function invariantsFor(symbol: string, all: Invariant[]): Invariant[] {
@@ -19,5 +23,6 @@ export function invariantsFor(symbol: string, all: Invariant[]): Invariant[] {
 function matches(symbol: string, pattern: string): boolean {
   if (pattern === symbol) return true;
   if (pattern.endsWith("*")) return symbol.startsWith(pattern.slice(0, -1));
+  if (pattern.startsWith("*")) return symbol.endsWith(pattern.slice(1));
   return symbol.endsWith("." + pattern) || symbol.endsWith("/" + pattern);
 }

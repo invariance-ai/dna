@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "dna CLI — codebase context for coding agents.",
   "license": "MIT",
+  "type": "module",
   "bin": {
     "dna": "./dist/index.js"
   },
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@invariance/dna-core": "workspace:*",
+    "@invariance/dna-mcp": "workspace:*",
     "@invariance/dna-schemas": "workspace:*",
     "commander": "^12.1.0",
     "kleur": "^4.1.5"

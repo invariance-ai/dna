@@ -1,16 +1,85 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { TestRef } from "@invariance/dna-schemas";
+import type { DnaIndex } from "./index_store.js";
 
 /**
- * Discover test files and associate them with the symbols they exercise.
- * v0 heuristics:
- *   - co-located: foo.ts ↔ foo.test.ts / foo.spec.ts / test_foo.py
- *   - import-based: test file imports symbol X => covers X
- *   - description-based: test name mentions symbol X
+ * Test discovery heuristics (v0.1):
+ *   - co-located: foo.ts ↔ foo.test.ts / foo.spec.ts / test_foo.py / foo_test.py
+ *   - mention-based: any test file that mentions the symbol name verbatim
+ *
+ * Trade-off: false positives on common names (e.g. "init"). The CLI dedupes
+ * and ranks co-located matches higher.
  */
-export async function discoverTests(_root: string): Promise<TestRef[]> {
-  throw new Error("tests.discoverTests: not implemented");
+export function testFilesIn(index: DnaIndex): string[] {
+  const set = new Set<string>();
+  for (const s of index.symbols) {
+    if (isTestFile(s.file)) set.add(s.file);
+  }
+  return [...set];
 }
 
-export function testsForSymbol(symbol: string, all: TestRef[]): TestRef[] {
-  return all.filter((t) => t.symbols_covered.includes(symbol));
+export function isTestFile(file: string): boolean {
+  const base = path.basename(file);
+  return (
+    /\.(test|spec)\.[jt]sx?$/.test(base) ||
+    /^test_.+\.py$/.test(base) ||
+    /.+_test\.py$/.test(base)
+  );
+}
+
+export function frameworkFor(file: string): TestRef["framework"] {
+  const base = path.basename(file);
+  if (base.endsWith(".py")) return "pytest";
+  if (/\.spec\./.test(base)) return "vitest";
+  if (/\.test\./.test(base)) return "jest";
+  return "unknown";
+}
+
+export async function testsForSymbol(
+  symbol: string,
+  symbolFile: string,
+  root: string,
+  index: DnaIndex,
+): Promise<TestRef[]> {
+  const out: TestRef[] = [];
+  const candidates = testFilesIn(index);
+
+  const dir = path.dirname(symbolFile);
+  const stem = path.basename(symbolFile).replace(/\.[jt]sx?$|\.py$/, "");
+  const coLocated = new Set([
+    path.join(dir, `${stem}.test.ts`),
+    path.join(dir, `${stem}.test.tsx`),
+    path.join(dir, `${stem}.test.js`),
+    path.join(dir, `${stem}.spec.ts`),
+    path.join(dir, `${stem}.spec.js`),
+    path.join(dir, `test_${stem}.py`),
+    path.join(dir, `${stem}_test.py`),
+  ]);
+
+  for (const t of candidates) {
+    let covers = false;
+    let isColo = coLocated.has(t);
+    try {
+      const src = await readFile(path.join(root, t), "utf8");
+      if (src.includes(symbol)) covers = true;
+    } catch {
+      // ignore
+    }
+    if (covers || isColo) {
+      out.push({
+        file: t,
+        framework: frameworkFor(t),
+        symbols_covered: [symbol],
+      });
+    }
+  }
+
+  // co-located first
+  out.sort((a, b) => {
+    const ac = coLocated.has(a.file) ? 0 : 1;
+    const bc = coLocated.has(b.file) ? 0 : 1;
+    return ac - bc;
+  });
+  return out;
 }

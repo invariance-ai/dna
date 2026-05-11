@@ -10,6 +10,7 @@ import { registerFind } from "./commands/find.js";
 import { registerTrace } from "./commands/trace.js";
 import { registerServe } from "./commands/serve.js";
 import { registerBench } from "./commands/bench.js";
+import { registerPrepare } from "./commands/prepare.js";
 
 const program = new Command()
   .name("dna")
@@ -18,6 +19,7 @@ const program = new Command()
 
 registerInit(program);
 registerIndex(program);
+registerPrepare(program);
 registerContext(program);
 registerImpact(program);
 registerTests(program);
