@@ -34,6 +34,7 @@ import { registerAsk } from "./commands/ask.js";
 import { registerQuestions } from "./commands/questions.js";
 import { registerSession } from "./commands/session.js";
 import { registerWhy } from "./commands/why.js";
+import { registerLessons } from "./commands/lessons.js";
 
 const program = new Command()
   .name("dna")
@@ -74,6 +75,7 @@ registerAsk(program);
 registerQuestions(program);
 registerSession(program);
 registerWhy(program);
+registerLessons(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);

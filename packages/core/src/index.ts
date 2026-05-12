@@ -14,3 +14,5 @@ export * from "./promote.js";
 export * from "./preferences.js";
 export * from "./features.js";
 export * from "./questions.js";
+export * from "./claude_md.js";
+export * from "./lessons.js";

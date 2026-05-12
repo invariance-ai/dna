@@ -74,6 +74,9 @@ importers:
       '@invariance/dna-core':
         specifier: workspace:*
         version: link:../core
+      '@invariance/dna-llm':
+        specifier: workspace:*
+        version: link:../llm
       '@invariance/dna-schemas':
         specifier: workspace:*
         version: link:../schemas
