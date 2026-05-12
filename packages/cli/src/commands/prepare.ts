@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import kleur from "kleur";
-import { prepareEdit, recordPrepared } from "@invariance/dna-core";
+import { prepareEdit, recordPrepared, inferSymbols, topSymbols } from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 interface PrepareOpts extends RootOption {
@@ -9,19 +9,23 @@ interface PrepareOpts extends RootOption {
   budget?: string;
   since?: string;
   depth?: string;
+  fromPrompt?: string;
+  feature?: string;
 }
 
 export function registerPrepare(program: Command): void {
   addRootOption(
     program
-      .command("prepare <symbol>")
+      .command("prepare [symbol]")
       .description("Decision-ready brief before editing a symbol (calls prepare_edit)")
       .option("--intent <text>", "What you plan to change", "(unspecified)")
       .option("--budget <tokens>", "Approximate token budget for the brief")
       .option("--since <when>", "Drop notes/decisions/questions older than this (ISO or 7d/2w/3mo)")
       .option("--depth <n>", "Neighborhood depth for callee context (1-3)")
+      .option("--from-prompt <text>", "Infer the symbol from a natural-language prompt")
+      .option("--feature <label>", "Use the feature's top symbol when no symbol is given")
       .option("--json", "Emit JSON instead of markdown"),
-  ).action(async (symbol: string, opts: PrepareOpts) => {
+  ).action(async (symbolArg: string | undefined, opts: PrepareOpts) => {
     try {
       const root = resolveRoot(opts);
       const budget = opts.budget ? Number(opts.budget) : undefined;
@@ -32,6 +36,37 @@ export function registerPrepare(program: Command): void {
       if (depth !== undefined && (!Number.isInteger(depth) || depth < 1 || depth > 3)) {
         throw new Error("--depth must be 1, 2, or 3");
       }
+
+      let symbol = symbolArg;
+      if (!symbol && opts.feature) {
+        const top = await topSymbols(root, opts.feature, 1);
+        if (top.length === 0) throw new Error(`feature "${opts.feature}" has no symbols (run \`dna feature attribute\` first)`);
+        const id = top[0]!.id;
+        const hash = id.indexOf("#");
+        const tail = hash >= 0 ? id.slice(hash + 1) : id;
+        const colon = tail.lastIndexOf(":");
+        symbol = colon > 0 ? tail.slice(0, colon) : tail;
+        if (!opts.json) {
+          console.error(kleur.dim(`using top symbol "${symbol}" from feature "${opts.feature}"`));
+        }
+      }
+      if (!symbol && opts.fromPrompt) {
+        const matches = await inferSymbols(root, opts.fromPrompt, { limit: 3 });
+        if (matches.length === 0) {
+          throw new Error(`no symbol matches for prompt; try \`dna plan "${opts.fromPrompt}"\``);
+        }
+        const top = matches[0]!;
+        symbol = top.symbol.qualified_name ?? top.symbol.name;
+        if (!opts.json) {
+          console.error(
+            kleur.dim(`inferred symbol "${symbol}" (confidence ${top.score}) from prompt`),
+          );
+        }
+      }
+      if (!symbol) {
+        throw new Error("symbol is required (or pass --from-prompt <text> / --feature <label>)");
+      }
+
       const r = await prepareEdit(
         { symbol, intent: opts.intent, budget, since: opts.since, depth },
         root,

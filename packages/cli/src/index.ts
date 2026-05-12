@@ -40,6 +40,15 @@ import { registerConflicts } from "./commands/conflicts.js";
 import { registerAssume } from "./commands/assume.js";
 import { registerHealth } from "./commands/health.js";
 import { registerLessons } from "./commands/lessons.js";
+import { registerGate } from "./commands/gate.js";
+import { registerWaive } from "./commands/waive.js";
+import { registerPlan } from "./commands/plan.js";
+import { registerTestRecord } from "./commands/test-record.js";
+import { registerRuntime } from "./commands/runtime.js";
+import { registerAudit } from "./commands/audit.js";
+import { registerReviewMemory } from "./commands/review-memory.js";
+import { registerVerifyContract } from "./commands/verify-contract.js";
+import { registerCheckProposal } from "./commands/check-proposal.js";
 
 const program = new Command()
   .name("dna")
@@ -86,6 +95,15 @@ registerConflicts(program);
 registerAssume(program);
 registerHealth(program);
 registerLessons(program);
+registerGate(program);
+registerWaive(program);
+registerPlan(program);
+registerTestRecord(program);
+registerRuntime(program);
+registerAudit(program);
+registerReviewMemory(program);
+registerVerifyContract(program);
+registerCheckProposal(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);
