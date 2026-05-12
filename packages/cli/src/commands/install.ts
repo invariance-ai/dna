@@ -21,9 +21,14 @@ When the user gives a durable instruction ("from now on…", "always…", "i pre
 
 When you learn something the next agent should know, persist it:
 \`\`\`bash
-dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
+dna lessons record "<one sentence>"          # auto-classified: global → CLAUDE.md; scoped → notes
+dna lessons record "<…>" --hint-scope global # bias the classifier when it's wrong
+dna lessons reclassify <id> --to <scope>     # move a lesson between tiers
+dna learn <symbol> --lesson "<…>"            # legacy: always symbol-scoped
 dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
 \`\`\`
+
+\`dna lessons record\` returns the chosen scope and signals; if the scope looks wrong (e.g. it picked \`symbol\` for something repo-wide), call \`dna lessons reclassify <id> --to global\` to fix it. Global lessons land in the \`<!-- dna:global-lessons -->\` block of CLAUDE.md and are always loaded; scoped lessons live in \`.dna/notes/{symbol,file,feature}/\` and are auto-pulled when the prompt mentions the matching target.
 
 **Tag the session early.** When you understand what the user is working on (e.g. "the homepage", "the auth flow"), call \`dna feature use <short-kebab-label>\` once. Use the exact label if the user names a known feature; otherwise pick a short kebab-case label. dna then learns which symbols belong to that feature and surfaces them automatically on future sessions that mention the same label.
 <!-- dna:end -->

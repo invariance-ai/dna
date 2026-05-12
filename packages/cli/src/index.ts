@@ -39,6 +39,7 @@ import { registerContributors } from "./commands/contributors.js";
 import { registerConflicts } from "./commands/conflicts.js";
 import { registerAssume } from "./commands/assume.js";
 import { registerHealth } from "./commands/health.js";
+import { registerLessons } from "./commands/lessons.js";
 
 const program = new Command()
   .name("dna")
@@ -84,6 +85,7 @@ registerContributors(program);
 registerConflicts(program);
 registerAssume(program);
 registerHealth(program);
+registerLessons(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);

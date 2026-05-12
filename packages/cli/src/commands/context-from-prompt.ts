@@ -1,11 +1,14 @@
 import type { Command } from "commander";
 import {
   loadNotes,
+  loadFileNotes,
+  loadFeatureNotes,
   loadInvariants,
   invariantsFor,
   readIndex,
   loadFeatures,
   matchFeaturesInPrompt,
+  readGlobalLessonsBody,
 } from "@invariance/dna-core";
 import type { SymbolRef } from "@invariance/dna-schemas";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
@@ -22,6 +25,29 @@ const STOPWORDS = new Set([
   "README", "CLAUDE", "PR", "MR", "API", "URL", "HTTP", "HTTPS",
   "JSON", "YAML", "TOML", "HTML", "CSS", "SQL",
 ]);
+
+const FILEPATH_RE =
+  /\b(?:[\w@.-]+\/)*[\w@.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|rb|java|kt|swift|md|yml|yaml|toml|json)\b/g;
+
+function extractFilePaths(text: string, knownFiles: Set<string>): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(FILEPATH_RE)) {
+    const tok = m[0];
+    if (knownFiles.has(tok)) {
+      out.add(tok);
+      continue;
+    }
+    // Fallback: suffix-match against indexed files. Picks one shortest match.
+    let best: string | undefined;
+    for (const f of knownFiles) {
+      if (f === tok || f.endsWith("/" + tok)) {
+        if (!best || f.length < best.length) best = f;
+      }
+    }
+    if (best) out.add(best);
+  }
+  return Array.from(out);
+}
 
 function extractCandidates(text: string): string[] {
   const out = new Set<string>();
@@ -127,7 +153,28 @@ export function registerContextFromPrompt(program: Command): void {
         if (!prev || best.score > prev.score) matches.set(key, best);
       }
     }
-    if (matches.size === 0) return;
+    // File and feature pulls — separate from symbol matches. They produce
+    // their own blocks below and are deduped against the CLAUDE.md global
+    // lessons block so we never re-inject content the model already has.
+    const filePaths = extractFilePaths(text, new Set(index.files)).slice(0, 3);
+    const featureLabels: string[] = [];
+    try {
+      const featuresFile = await loadFeatures(root);
+      for (const label of matchFeaturesInPrompt(text, featuresFile.features)) {
+        if (!featureLabels.includes(label)) featureLabels.push(label);
+        if (featureLabels.length >= 2) break;
+      }
+    } catch {
+      /* no features file */
+    }
+
+    const globalBody = await readGlobalLessonsBody(root).catch(() => "");
+    const dedupSkip = (lesson: string): boolean => {
+      if (!globalBody) return false;
+      return globalBody.includes(lesson.toLowerCase().slice(0, 80));
+    };
+
+    if (matches.size === 0 && filePaths.length === 0 && featureLabels.length === 0) return;
 
     const top = Array.from(matches.values())
       .sort((a, b) => b.score - a.score)
@@ -144,14 +191,39 @@ export function registerContextFromPrompt(program: Command): void {
     for (const { sym } of top) {
       const symName = sym.qualified_name ?? sym.name;
       const invs = invariantsFor(symName, invariants);
-      const notes = await loadNotes(root, symName).catch(() => []);
+      const notes = (await loadNotes(root, symName).catch(() => [])).filter(
+        (n) => !dedupSkip(n.lesson),
+      );
       if (invs.length === 0 && notes.length === 0) continue;
       blocks.push({ symbol: symName, file: sym.file, line: sym.line, invariants: invs, notes });
     }
-    if (blocks.length === 0) return;
+
+    const fileBlocks: Array<{ file: string; notes: Awaited<ReturnType<typeof loadFileNotes>> }> = [];
+    for (const f of filePaths) {
+      const notes = (await loadFileNotes(root, f).catch(() => [])).filter(
+        (n) => !dedupSkip(n.lesson),
+      );
+      if (notes.length > 0) fileBlocks.push({ file: f, notes: notes.slice(0, 3) });
+    }
+
+    const featureBlocks: Array<{ label: string; notes: Awaited<ReturnType<typeof loadFeatureNotes>> }> = [];
+    for (const l of featureLabels) {
+      const notes = (await loadFeatureNotes(root, l).catch(() => [])).filter(
+        (n) => !dedupSkip(n.lesson),
+      );
+      if (notes.length > 0) featureBlocks.push({ label: l, notes: notes.slice(0, 3) });
+    }
+
+    if (blocks.length === 0 && fileBlocks.length === 0 && featureBlocks.length === 0) return;
 
     if (opts.json) {
-      console.log(JSON.stringify({ matches: blocks }, null, 2));
+      console.log(
+        JSON.stringify(
+          { matches: blocks, files: fileBlocks, features: featureBlocks },
+          null,
+          2,
+        ),
+      );
       return;
     }
 
@@ -178,6 +250,24 @@ export function registerContextFromPrompt(program: Command): void {
           const sev = n.severity ?? "info";
           lines.push(`- [${sev}] ${n.lesson}`);
         }
+      }
+      lines.push("");
+    }
+    for (const fb of fileBlocks) {
+      lines.push(`### file: \`${fb.file}\``);
+      lines.push("");
+      lines.push("**Notes from prior edits to this file:**");
+      for (const n of fb.notes) {
+        lines.push(`- [${n.severity ?? "info"}] ${n.lesson}`);
+      }
+      lines.push("");
+    }
+    for (const fb of featureBlocks) {
+      lines.push(`### feature: \`${fb.label}\``);
+      lines.push("");
+      lines.push("**Notes from prior work in this feature:**");
+      for (const n of fb.notes) {
+        lines.push(`- [${n.severity ?? "info"}] ${n.lesson}`);
       }
       lines.push("");
     }

@@ -78,6 +78,22 @@ export type NoteSeverity = z.infer<typeof NoteSeverity>;
 export const NoteSource = z.enum(["agent", "human", "doc", "git", "promoted", "todo"]);
 export type NoteSource = z.infer<typeof NoteSource>;
 
+/**
+ * Where a lesson lives. `symbol` is the legacy default and remains the storage
+ * for `.dna/notes/{symbol}.yml`. `file` and `feature` write to dedicated
+ * subdirectories. `global` lives in the CLAUDE.md `dna:global-lessons` block.
+ */
+export const NoteScope = z.enum(["symbol", "file", "feature", "global"]);
+export type NoteScope = z.infer<typeof NoteScope>;
+
+export const ClassifierMeta = z.object({
+  signals: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1),
+  used_llm: z.boolean().default(false),
+  model: z.string().optional(),
+});
+export type ClassifierMeta = z.infer<typeof ClassifierMeta>;
+
 export const Note = z.object({
   symbol: z.string(),
   lesson: z.string(),
@@ -86,6 +102,12 @@ export const Note = z.object({
   promoted: z.boolean().default(false),
   recorded_at: z.string(),
   source: NoteSource.default("agent"),
+  /** Stable identifier so a lesson can be moved between scopes by id. */
+  id: z.string().optional(),
+  scope: NoteScope.default("symbol"),
+  /** Concrete target for the scope: symbol name, file path, or feature label. */
+  applies_to: z.string().optional(),
+  classifier: ClassifierMeta.optional(),
 });
 export type Note = z.infer<typeof Note>;
 
@@ -299,6 +321,77 @@ export const DecisionsForResult = z.object({
 });
 export type DecisionsForResult = z.infer<typeof DecisionsForResult>;
 
+/* ---------- Lessons (v0.6 — tiered scope) ---------- */
+
+export const RecordLessonInput = z.object({
+  lesson: z.string(),
+  evidence: z.string().optional(),
+  severity: NoteSeverity.default("medium"),
+  /** Optional scope hint. When set, classifier still runs for signals but does not override. */
+  hint_scope: NoteScope.optional(),
+  /** Optional target hint (symbol name, file path, feature label). */
+  hint_target: z.string().optional(),
+  /** Hard override: skip classification entirely. */
+  force_scope: NoteScope.optional(),
+  force_target: z.string().optional(),
+  /** Compute classification without writing. */
+  dry_run: z.boolean().default(false),
+  /** Skip the LLM tie-breaker. Heuristic top label is used regardless of confidence. */
+  no_llm: z.boolean().default(false),
+});
+export type RecordLessonInput = z.infer<typeof RecordLessonInput>;
+
+export const RecordLessonResult = z.object({
+  scope: NoteScope,
+  target: z.string().optional(),
+  path: z.string(),
+  id: z.string(),
+  signals: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1),
+  used_llm: z.boolean().default(false),
+  dry_run: z.boolean().default(false),
+});
+export type RecordLessonResult = z.infer<typeof RecordLessonResult>;
+
+export const LessonsListInput = z.object({
+  scope: NoteScope.optional(),
+  target: z.string().optional(),
+});
+export type LessonsListInput = z.infer<typeof LessonsListInput>;
+
+export const LessonEntry = z.object({
+  id: z.string(),
+  scope: NoteScope,
+  target: z.string().optional(),
+  lesson: z.string(),
+  severity: NoteSeverity,
+  recorded_at: z.string(),
+  path: z.string(),
+});
+export type LessonEntry = z.infer<typeof LessonEntry>;
+
+export const LessonsListResult = z.object({
+  lessons: z.array(LessonEntry),
+});
+export type LessonsListResult = z.infer<typeof LessonsListResult>;
+
+export const ReclassifyLessonInput = z.object({
+  id: z.string(),
+  to_scope: NoteScope,
+  to_target: z.string().optional(),
+});
+export type ReclassifyLessonInput = z.infer<typeof ReclassifyLessonInput>;
+
+export const ReclassifyLessonResult = z.object({
+  id: z.string(),
+  from_scope: NoteScope,
+  from_target: z.string().optional(),
+  to_scope: NoteScope,
+  to_target: z.string().optional(),
+  path: z.string(),
+});
+export type ReclassifyLessonResult = z.infer<typeof ReclassifyLessonResult>;
+
 export const SuggestInput = z.object({
   min_count: z.number().int().min(1).default(3),
   limit: z.number().int().min(1).max(100).default(10),
@@ -421,6 +514,23 @@ export const TOOLS = {
       "Authoring queue: symbols agents have queried frequently that have no covering invariant. Use to find what's worth documenting next.",
     input: SuggestInput,
     output: SuggestResult,
+  },
+  record_lesson: {
+    description:
+      "Persist a lesson and let dna classify its scope (symbol|file|feature|global). Repo-wide lessons go to the CLAUDE.md managed block (always loaded); scoped lessons go to .dna/notes/* (pulled on-demand). Pass hint_scope/hint_target to bias the classifier, or force_scope to skip it. Use this in preference to record_learning when the lesson may not belong to a single symbol.",
+    input: RecordLessonInput,
+    output: RecordLessonResult,
+  },
+  lessons_list: {
+    description: "List recorded lessons across scopes. Filter by scope or target.",
+    input: LessonsListInput,
+    output: LessonsListResult,
+  },
+  reclassify_lesson: {
+    description:
+      "Move a lesson between scopes (e.g. promote a scoped note to CLAUDE.md or demote a global lesson to a symbol/file).",
+    input: ReclassifyLessonInput,
+    output: ReclassifyLessonResult,
   },
 } as const;
 

@@ -24,3 +24,5 @@ export * from "./conflicts.js";
 export * from "./assumptions.js";
 export * from "./testgaps.js";
 export * from "./health.js";
+export * from "./claude_md.js";
+export * from "./lessons.js";
