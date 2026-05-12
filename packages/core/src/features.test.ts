@@ -12,6 +12,8 @@ import {
   matchFeaturesInPrompt,
   mergeFeatures,
   normalizeLabel,
+  overlapFeatures,
+  isolateFeature,
   readLastAttribution,
   renameFeature,
   setActive,
@@ -293,5 +295,29 @@ describe("renameFeature + mergeFeatures", () => {
     expect(merged.symbols.length).toBe(2);
     const home = merged.symbols.find((s: { id: string }) => s.id.includes("Home.tsx"));
     expect(home?.edits).toBe(3);
+  });
+});
+
+describe("overlap / isolate", () => {
+  it("finds shared symbols and exclusive ones", async () => {
+    const root = await tempRepo();
+    await seedIndex(root);
+
+    await setActive(root, "alpha");
+    await attributeFiles(root, ["src/Home.tsx"], "edit");
+    await attributeFiles(root, ["src/Home.tsx"], "edit");
+    await attributeFiles(root, ["src/hooks/useHomeData.ts"], "edit");
+
+    await setActive(root, "beta");
+    await attributeFiles(root, ["src/Home.tsx"], "edit");
+    await attributeFiles(root, ["src/Other.ts"], "edit");
+
+    const overlap = await overlapFeatures(root, "alpha", "beta", 0.05);
+    expect(overlap.length).toBe(1);
+    expect(overlap[0]!.id).toContain("Home.tsx");
+
+    const alphaCore = await isolateFeature(root, "alpha", 0.05);
+    expect(alphaCore.some((e) => e.id.includes("useHomeData.ts"))).toBe(true);
+    expect(alphaCore.some((e) => e.id.includes("Home.tsx"))).toBe(false);
   });
 });

@@ -470,6 +470,67 @@ export async function appendSessionEventIfActive(
   }
 }
 
+export interface OverlapEntry {
+  id: string;
+  weight_a: number;
+  weight_b: number;
+  min: number;
+  product: number;
+}
+
+export async function overlapFeatures(
+  root: string,
+  labelA: string,
+  labelB: string,
+  threshold = 0.2,
+): Promise<OverlapEntry[]> {
+  const a = normalizeLabel(labelA);
+  const b = normalizeLabel(labelB);
+  const features = await loadFeatures(root);
+  const fa = features.features[a];
+  const fb = features.features[b];
+  if (!fa || !fb) return [];
+  const byId = new Map(fa.symbols.map((s) => [s.id, s.weight] as const));
+  const out: OverlapEntry[] = [];
+  for (const sb of fb.symbols) {
+    const wa = byId.get(sb.id);
+    if (wa === undefined) continue;
+    const min = Math.min(wa, sb.weight);
+    if (min < threshold) continue;
+    out.push({ id: sb.id, weight_a: wa, weight_b: sb.weight, min, product: wa * sb.weight });
+  }
+  out.sort((x, y) => y.product - x.product);
+  return out;
+}
+
+export interface IsolateEntry {
+  id: string;
+  weight: number;
+}
+
+export async function isolateFeature(
+  root: string,
+  label: string,
+  exclusiveThreshold = 0.1,
+): Promise<IsolateEntry[]> {
+  const normalized = normalizeLabel(label);
+  const features = await loadFeatures(root);
+  const f = features.features[normalized];
+  if (!f) return [];
+  const others: Array<[string, number]> = [];
+  for (const [lbl, other] of Object.entries(features.features)) {
+    if (lbl === normalized) continue;
+    for (const s of other.symbols) {
+      if (s.weight >= exclusiveThreshold) others.push([s.id, s.weight]);
+    }
+  }
+  const otherIds = new Set(others.map(([id]) => id));
+  return f.symbols
+    .filter((s) => !otherIds.has(s.id))
+    .map((s) => ({ id: s.id, weight: s.weight }))
+    .sort((a, b) => b.weight - a.weight);
+}
+
 export interface TopSymbol {
   id: string;
   weight: number;

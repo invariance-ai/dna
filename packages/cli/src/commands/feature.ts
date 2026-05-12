@@ -11,6 +11,8 @@ import {
   loadFeatures,
   mergeFeatures,
   normalizeLabel,
+  overlapFeatures,
+  isolateFeature,
   readLastAttribution,
   renameFeature,
   setActive,
@@ -199,6 +201,68 @@ export function registerFeature(program: Command): void {
     }
     console.log(`${kleur.green("merged")} ${normalizeLabel(from)} → ${kleur.bold(normalizeLabel(into))}`);
   });
+
+  addRootOption(
+    feature
+      .command("overlap <a> <b>")
+      .description("Symbols shared between two features (signals coupling)")
+      .option("--threshold <n>", "Minimum min(weight_a, weight_b)", "0.2")
+      .option("--json", "Emit JSON"),
+  ).action(
+    async (
+      a: string,
+      b: string,
+      opts: RootOption & { threshold: string; json?: boolean },
+    ) => {
+      const root = resolveRoot(opts);
+      const threshold = Number(opts.threshold);
+      const entries = await overlapFeatures(root, a, b, threshold);
+      if (opts.json) {
+        console.log(JSON.stringify({ a: normalizeLabel(a), b: normalizeLabel(b), threshold, entries }, null, 2));
+        return;
+      }
+      if (entries.length === 0) {
+        console.log(kleur.dim(`no overlap between ${a} and ${b} at threshold ${threshold}`));
+        return;
+      }
+      console.log(
+        `${kleur.bold(normalizeLabel(a))} ∩ ${kleur.bold(normalizeLabel(b))} ${kleur.dim(`(threshold ${threshold})`)}`,
+      );
+      for (const e of entries) {
+        console.log(
+          `  ${e.id} ${kleur.dim(`a=${e.weight_a.toFixed(2)} b=${e.weight_b.toFixed(2)} min=${e.min.toFixed(2)}`)}`,
+        );
+      }
+    },
+  );
+
+  addRootOption(
+    feature
+      .command("isolate <label>")
+      .description("Symbols exclusive to this feature (its true core)")
+      .option("--threshold <n>", "Other-feature weight to count as shared", "0.1")
+      .option("--json", "Emit JSON"),
+  ).action(
+    async (label: string, opts: RootOption & { threshold: string; json?: boolean }) => {
+      const root = resolveRoot(opts);
+      const threshold = Number(opts.threshold);
+      const entries = await isolateFeature(root, label, threshold);
+      if (opts.json) {
+        console.log(JSON.stringify({ label: normalizeLabel(label), threshold, entries }, null, 2));
+        return;
+      }
+      if (entries.length === 0) {
+        console.log(kleur.dim(`no exclusive symbols for ${normalizeLabel(label)}`));
+        return;
+      }
+      console.log(
+        `${kleur.bold(normalizeLabel(label))} exclusive symbols ${kleur.dim(`(others ≥ ${threshold} excluded)`)}`,
+      );
+      for (const e of entries) {
+        console.log(`  ${e.id} ${kleur.dim(`weight=${e.weight.toFixed(2)}`)}`);
+      }
+    },
+  );
 
   addRootOption(
     feature
