@@ -2,7 +2,20 @@
 
 > The repo that gets smarter every time you use it.
 
-`dna` is **organizational memory with a code interface**. It gives Claude Code, Codex, Cursor — any coding agent — a compact, evidence-backed map of your repo before it changes code: symbols, callers and callees, tests that protect each function, recent git history, declarative invariants you author once ("refunds over $1000 require finance approval"), and **lessons learned from previous edits** that agents and humans persist as they go.
+`dna` gives coding agents — Claude Code, Codex, Cursor — the slice of repo context they'd otherwise miss: symbols, callers and callees, tests that protect each function, recent git history, declarative invariants you author once ("refunds over $1000 require finance approval"), and **lessons learned from previous edits** that agents and humans persist as they go. Anchored to symbols, recorded once, surfaced when relevant.
+
+In a blinded judge run against vanilla Claude Code on a real internal repo (309 source files, 10 prompts, Sonnet judge, A/B-swapped), **dna answers won 13 of 19 valid comparisons (+11% overall quality)**:
+
+| dimension | baseline | dna |
+|---|---:|---:|
+| correctness | 4.15 | **4.20** |
+| specificity | 4.15 | **4.70** |
+| completeness | 3.80 | **4.50** |
+| **overall (1–5)** | **4.03** | **4.47** |
+
+Methodology and raw numbers: [`bench/dogfood/2026-05-12-invariance-platform.md`](bench/dogfood/2026-05-12-invariance-platform.md).
+
+**Tokens aren't the story.** `claude -p` explores via Glob/Read regardless of injected context; dna is additive there (+1.4% input tokens on the run above). The win is what the agent does *with* that exploration — dna answers cite real symbols and line numbers (`replayRun:14`, `applyMutations:58`) where baseline hand-waves at file-level.
 
 Three inputs compound on a single symbol graph:
 1. **Static structure** — calls, callers, tests, provenance (the spine)
@@ -10,22 +23,6 @@ Three inputs compound on a single symbol graph:
 3. **Agent behavior** *(v0.3)* — what they asked, what they broke (the signal)
 
 Day one, dna is useful for context. Six months in, the notes-and-invariants layer is an asset every new engineer and every new agent depends on. Operational reality, encoded and made queryable. That's the thesis.
-
-## Measured impact
-
-Real repo benchmark on `invariance-platform` (1832 symbols, 309 source files): 10 developer questions, run twice per side with order-swapped blinded A/B judging by Claude Sonnet 4.6. Same SHA, same model (Claude Opus 4.7), same prompts — only difference is whether dna's hooks and index are present.
-
-| Dimension | Baseline | dna |
-|---|---:|---:|
-| Correctness (1–5) | 4.15 | **4.20** |
-| Specificity (1–5) | 4.15 | **4.70** |
-| Completeness (1–5) | 3.80 | **4.50** |
-| **Overall** | **4.03** | **4.47** (+11%) |
-| Blinded wins (n=19) | 6 | **13** |
-
-dna answers cite real symbols and line numbers (`replayRun:14`, `applyMutations:58`) where baseline hand-waves at file-level. Methodology and per-prompt data: [`bench/dogfood/2026-05-12-platform-tokens-quality.md`](bench/dogfood/2026-05-12-platform-tokens-quality.md).
-
-Token cost was flat (+1.4% input, longer output) — dna's value is *what the agent sees*, not how much.
 
 ## Quickstart
 
@@ -45,7 +42,32 @@ Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y
 
 Want the long version? See [`docs/guide/getting-started.md`](docs/guide/getting-started.md) for the 10-minute walkthrough, [`docs/guide/commands.md`](docs/guide/commands.md) for the full CLI reference, and [`docs/guide/agents/`](docs/guide/agents/) for per-IDE setup details.
 
+## What dna is not (yet)
+
+Honest, up-front:
+
+- **Parser is regex-based** for TS/JS/Python — ~90% precision on typical code, lower on decorators-as-factories, dynamic dispatch, and heavy macros. Trade-off documented in [`packages/core/src/parser.ts:5`](packages/core/src/parser.ts). Tree-sitter (WASM) is the next accuracy step.
+- **No semantic import resolution.** Re-exports and barrel files may miss call edges.
+- **No cross-repo / monorepo-aware symbol IDs** yet — each repo is its own graph.
+- **Proof base is n=1.** The +11% quality win above is one repo, 10 prompts. We're running this against more repos next; see [`docs/dogfood-runbook.md`](docs/dogfood-runbook.md) and contribute a result.
+
 ## CLI
+
+### Start here — the Core 5
+
+The whole happy path is five commands:
+
+```bash
+dna init                                              # 1. write .dna/config.yml + invariants.yml
+dna install claude                                    # 2. wire CLAUDE.md + .claude hooks (or: install codex)
+dna index                                             # 3. build the symbol graph
+dna prepare <symbol> --intent "<one-liner>"           # 4. ⭐ decision-ready brief before edits
+dna learn <symbol> --lesson "<one sentence>"          # 5. record what an edit taught you
+```
+
+Everything below is the full surface for power users and automation.
+
+### Full command reference
 
 ```bash
 # Reading
@@ -70,6 +92,8 @@ dna serve                                             # MCP stdio server
 dna serve --observe                                   # ⚡ opt-in: record per-symbol query counts (metadata only)
 dna suggest                                           # surface symbols agents ask about repeatedly with no covering invariant
 ```
+
+Run `dna --help` for the full 49-command surface (postmortem, promote, gate, runtime, audit, …).
 
 ### Passive observer — opt-in, metadata only
 
@@ -204,7 +228,7 @@ Notes "deflate" over time — recurring ones get promoted to invariants, and dna
 | Cursor index | Embedded chunks | ❌ | ❌ | Closed |
 | Semgrep / CodeQL | Pattern findings | ❌ | Pattern-based (security) | Mixed |
 
-See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [bench/dogfood/2026-05-12-platform-tokens-quality.md](bench/dogfood/2026-05-12-platform-tokens-quality.md) for the real-repo benchmark.
+See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey. Measured quality results live in [`bench/dogfood/2026-05-12-invariance-platform.md`](bench/dogfood/2026-05-12-invariance-platform.md); [`docs/simulated-benchmark.md`](docs/simulated-benchmark.md) contains earlier pre-dogfood simulated estimates and is now superseded.
 
 ## Native-agent prompt commands
 
@@ -229,7 +253,7 @@ API execution is an explicit opt-in for automation: pass `--call-api` plus `ANTH
 
 ## Status
 
-v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python; tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.
+v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python (see [What dna is not (yet)](#what-dna-is-not-yet)); tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.
 
 v0.3 roadmap: passive metadata observer (`dna observe` — symbol query frequencies only, never conversation content) + `dna suggest` for the invariant authoring queue + LLM-assisted postmortem promotion.
 
