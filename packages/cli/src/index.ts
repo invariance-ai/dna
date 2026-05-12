@@ -50,12 +50,18 @@ import { registerReviewMemory } from "./commands/review-memory.js";
 import { registerVerifyContract } from "./commands/verify-contract.js";
 import { registerCheckProposal } from "./commands/check-proposal.js";
 
-const program = new Command()
-  .name("dna")
-  .description("Codebase context for coding agents.")
-  .version("0.1.0");
+export function buildProgram(): Command {
+  const program = new Command()
+    .name("dna")
+    .description("Codebase context for coding agents.")
+    .version("0.1.0");
 
-registerInit(program);
+  registerAll(program);
+  return program;
+}
+
+function registerAll(program: Command): void {
+  registerInit(program);
 registerWizard(program);
 registerInstall(program);
 registerPrefer(program);
@@ -102,10 +108,26 @@ registerTestRecord(program);
 registerRuntime(program);
 registerAudit(program);
 registerReviewMemory(program);
-registerVerifyContract(program);
-registerCheckProposal(program);
+  registerVerifyContract(program);
+  registerCheckProposal(program);
+}
 
-program.parseAsync(process.argv).catch((err) => {
-  console.error(err.message);
-  process.exit(1);
-});
+const isMain = (() => {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return false;
+    const url = new URL(`file://${entry}`).href;
+    return import.meta.url === url;
+  } catch {
+    return false;
+  }
+})();
+
+if (isMain) {
+  buildProgram()
+    .parseAsync(process.argv)
+    .catch((err: Error) => {
+      console.error(err.message);
+      process.exit(1);
+    });
+}

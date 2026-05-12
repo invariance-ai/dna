@@ -462,27 +462,32 @@ export const TOOLS = {
     output: PrepareEditResult,
   },
   get_context: {
-    description: "Full multi-strand context for a symbol.",
+    description:
+      "Multi-strand context (structure, tests, provenance, invariants) for a symbol. Call this when you need depth on a single symbol but don't yet know what you'll change — use prepare_edit instead when you have an intent in mind. Returns concrete file:line citations; prefer this over Glob/Read/Grep exploration for any indexed symbol.",
     input: GetContextInput,
     output: ContextResult,
   },
   impact_of: {
-    description: "Blast radius (symbols, files, tests) of changing a symbol.",
+    description:
+      "Blast radius of changing a symbol: callers, transitively affected symbols, files, and tests. Call before any refactor that touches a function used elsewhere — saves a manual caller hunt.",
     input: ImpactInput,
     output: ImpactResult,
   },
   tests_for: {
-    description: "Tests that protect a symbol — what to run after editing.",
+    description:
+      "Tests that protect a symbol. Call after an edit to know exactly what to run; framework (vitest/jest/pytest/mocha) is detected automatically.",
     input: TestsForInput,
     output: TestsForResult,
   },
   invariants_for: {
-    description: "Asserted invariants that apply before editing a symbol.",
+    description:
+      "Asserted invariants that apply to a symbol. Call before editing — invariants with severity=block must be respected. Authored by the team in .dna/invariants.yml.",
     input: InvariantsForInput,
     output: InvariantsForResult,
   },
   find_reusable: {
-    description: "Search the symbol graph for existing utilities to reuse.",
+    description:
+      "Search the symbol graph for existing helpers before writing new code. Call this whenever you're about to add a utility function — there's usually one already.",
     input: FindReusableInput,
     output: FindReusableResult,
   },
@@ -505,7 +510,8 @@ export const TOOLS = {
     output: RecordDecisionResult,
   },
   decisions_for: {
-    description: "Decisions previously recorded for a symbol.",
+    description:
+      "Choices previously recorded for a symbol — including the rejected alternative and rationale. Call before re-litigating a design choice; if a decision exists, follow it or explicitly supersede it.",
     input: DecisionsForInput,
     output: DecisionsForResult,
   },
@@ -522,7 +528,8 @@ export const TOOLS = {
     output: RecordLessonResult,
   },
   lessons_list: {
-    description: "List recorded lessons across scopes. Filter by scope or target.",
+    description:
+      "List recorded lessons across scopes (global, file, feature, symbol). Filter by scope or target. Use when you want to audit what dna knows about a topic before adding more.",
     input: LessonsListInput,
     output: LessonsListResult,
   },
