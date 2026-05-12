@@ -5,6 +5,7 @@ import {
   invariantsFor,
   formatInvariantsPretty,
   topSymbols,
+  diffSymbols,
   type TopSymbol,
 } from "@invariance/dna-core";
 import type { Invariant } from "@invariance/dna-schemas";
@@ -14,6 +15,8 @@ interface InvOpts extends RootOption {
   json?: boolean;
   feature?: string;
   limit?: number;
+  diff?: boolean;
+  base?: string;
 }
 
 export function registerInvariants(program: Command): void {
@@ -26,10 +29,40 @@ export function registerInvariants(program: Command): void {
         "--feature <label>",
         "Sort/filter invariants by relevance to a feature's weight bag",
       )
-      .option("--limit <n>", "When --feature is set, cap top symbols read", (v) => parseInt(v, 10), 50),
+      .option("--limit <n>", "When --feature is set, cap top symbols read", (v) => parseInt(v, 10), 50)
+      .option("--diff", "List invariants that apply to symbols in the working-tree diff")
+      .option("--base <ref>", "Diff base (default HEAD)", "HEAD"),
   ).action(async (symbol: string | undefined, opts: InvOpts) => {
     const root = resolveRoot(opts);
     const all = await loadInvariants(root);
+
+    if (opts.diff) {
+      const { base, symbols } = await diffSymbols(root, opts.base ?? "HEAD");
+      const seen = new Map<string, { invariant: Invariant; symbols: string[] }>();
+      for (const s of symbols) {
+        const id = s.qualified_name ?? s.name;
+        for (const inv of invariantsFor(id, all)) {
+          const e = seen.get(inv.name) ?? { invariant: inv, symbols: [] };
+          if (!e.symbols.includes(id)) e.symbols.push(id);
+          seen.set(inv.name, e);
+        }
+      }
+      const ranked = [...seen.values()];
+      if (opts.json) {
+        console.log(JSON.stringify({ base, invariants: ranked }, null, 2));
+        return;
+      }
+      if (ranked.length === 0) {
+        console.log(kleur.dim(`no invariants apply to changed symbols (vs ${base})`));
+        return;
+      }
+      console.log(kleur.bold(`${ranked.length} invariant(s) apply to changed symbols:`));
+      for (const r of ranked) {
+        console.log(`  ${kleur.cyan(r.invariant.name)} ${kleur.dim(`[${r.invariant.severity}]`)} — ${r.invariant.rule}`);
+        console.log(kleur.dim(`    symbols: ${r.symbols.slice(0, 5).join(", ")}${r.symbols.length > 5 ? "…" : ""}`));
+      }
+      return;
+    }
 
     if (opts.feature) {
       const top = await topSymbols(root, opts.feature, opts.limit ?? 50);
