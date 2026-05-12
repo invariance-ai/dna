@@ -1,8 +1,10 @@
 # repo-edit-bench: Simulated Benchmark Report
 
-**Status:** simulation, not measurement. Numbers are reasoned estimates with stated assumptions. Real numbers land when the harness ships (week 5).
+> **⚠️ Superseded.** This document captures pre-dogfood simulated estimates of token savings. The measured 2026-05-12 dogfood against invariance-platform ([`bench/dogfood/2026-05-12-invariance-platform.md`](../bench/dogfood/2026-05-12-invariance-platform.md)) showed input tokens were roughly flat (+1.4%) once `claude -p`'s own exploration was accounted for. The token-savings figures below did not survive contact with a real `claude -p` harness — the measured win is **answer quality (+11% overall, 13/19 judge wins)**, not token volume. Keeping this file as a historical record of the pre-measurement design.
 
-**Headline (simulated):** dna ≈ **62% fewer exploration tokens** and **48% fewer regressions** vs grep-only baseline across 30 tasks. Vector-RAG closes some of the token gap but trails on regressions.
+**Status:** simulation, not measurement. Numbers are reasoned estimates with stated assumptions.
+
+**Headline (simulated — superseded, see note above):** dna ≈ **62% fewer exploration tokens** and **48% fewer regressions** vs grep-only baseline across 30 tasks. Vector-RAG closes some of the token gap but trails on regressions.
 
 ---
 

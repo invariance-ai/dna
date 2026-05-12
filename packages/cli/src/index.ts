@@ -56,6 +56,22 @@ export function buildProgram(): Command {
     .description("Codebase context for coding agents.")
     .version("0.1.0");
 
+  program.addHelpText(
+    "beforeAll",
+    [
+      "Core 5 (the happy path):",
+      "  dna init                              write .dna/config.yml + invariants.yml",
+      "  dna install <claude|codex|cursor>     wire agent hooks + CLAUDE.md / AGENTS.md / .cursor/",
+      "  dna index                             build the symbol graph",
+      "  dna prepare <symbol> --intent <...>   decision-ready brief before edits",
+      "  dna learn <symbol> --lesson <...>     record what an edit taught you",
+      "",
+      "Everything else (44 commands) is the full surface for power users and automation.",
+      "See https://github.com/invariance-ai/dna#cli for the grouped reference.",
+      "",
+    ].join("\n"),
+  );
+
   registerAll(program);
   return program;
 }
