@@ -140,6 +140,27 @@ export const FeatureSymbol = z.object({
 });
 export type FeatureSymbol = z.infer<typeof FeatureSymbol>;
 
+/* ---------- Assumptions (v0.5+) ---------- */
+
+export const AssumptionConfidence = z.enum(["low", "medium", "high"]);
+export type AssumptionConfidence = z.infer<typeof AssumptionConfidence>;
+
+export const AssumptionSource = z.enum(["agent", "human", "llm"]);
+export type AssumptionSource = z.infer<typeof AssumptionSource>;
+
+export const Assumption = z.object({
+  id: z.string(),
+  symbol: z.string(),
+  statement: z.string(),
+  confidence: AssumptionConfidence.default("medium"),
+  verified: z.boolean().default(false),
+  verified_at: z.string().optional(),
+  evidence: z.string().optional(),
+  source: AssumptionSource.default("human"),
+  recorded_at: z.string(),
+});
+export type Assumption = z.infer<typeof Assumption>;
+
 /* ---------- Questions (v0.5) ---------- */
 
 export const QuestionStatus = z.enum(["unresolved", "resolved", "wontfix"]);
@@ -183,6 +204,8 @@ export const GetContextInput = z.object({
   symbol: z.string(),
   depth: z.number().int().min(1).max(5).default(2),
   strands: z.array(Strand).default(["structural", "tests", "provenance", "invariants"]),
+  since: z.string().optional(),
+  authored_by: z.string().optional(),
 });
 export type GetContextInput = z.infer<typeof GetContextInput>;
 
@@ -311,6 +334,15 @@ export type FindReusableResult = z.infer<typeof FindReusableResult>;
 export const PrepareEditInput = z.object({
   symbol: z.string(),
   intent: z.string().describe("What the agent plans to change, in one sentence."),
+  budget: z.number().int().positive().optional().describe(
+    "Optional token budget; sections are dropped tail-first when exceeded.",
+  ),
+  since: z.string().optional().describe(
+    "ISO date or relative like '7d'/'2w'/'3mo'; drops notes/decisions/questions older than this.",
+  ),
+  depth: z.number().int().min(1).max(3).optional().describe(
+    "Neighborhood depth for callee context (1 = symbol only).",
+  ),
 });
 export type PrepareEditInput = z.infer<typeof PrepareEditInput>;
 export const PrepareEditResult = z.object({

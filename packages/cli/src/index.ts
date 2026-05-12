@@ -34,6 +34,11 @@ import { registerAsk } from "./commands/ask.js";
 import { registerQuestions } from "./commands/questions.js";
 import { registerSession } from "./commands/session.js";
 import { registerWhy } from "./commands/why.js";
+import { registerStale } from "./commands/stale.js";
+import { registerContributors } from "./commands/contributors.js";
+import { registerConflicts } from "./commands/conflicts.js";
+import { registerAssume } from "./commands/assume.js";
+import { registerHealth } from "./commands/health.js";
 
 const program = new Command()
   .name("dna")
@@ -74,6 +79,11 @@ registerAsk(program);
 registerQuestions(program);
 registerSession(program);
 registerWhy(program);
+registerStale(program);
+registerContributors(program);
+registerConflicts(program);
+registerAssume(program);
+registerHealth(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err.message);
