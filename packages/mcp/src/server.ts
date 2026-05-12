@@ -23,7 +23,12 @@ import {
   rankDecisions,
   recordObservation,
   suggest as suggestImpl,
+  classifyLesson,
+  persistLesson,
+  listLessons,
+  reclassifyLesson,
 } from "@invariance/dna-core";
+import { llmClassify } from "@invariance/dna-llm";
 
 const OBSERVE = process.env.DNA_OBSERVE === "1";
 
@@ -119,6 +124,93 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
     case "suggest": {
       const a = args as Parameters<typeof suggestImpl>[1];
       return { suggestions: await suggestImpl(root, a) };
+    }
+    case "record_lesson": {
+      const a = args as {
+        lesson: string;
+        evidence?: string;
+        severity?: "low" | "medium" | "high";
+        hint_scope?: "global" | "symbol" | "file" | "feature";
+        hint_target?: string;
+        force_scope?: "global" | "symbol" | "file" | "feature";
+        force_target?: string;
+        dry_run?: boolean;
+        no_llm?: boolean;
+      };
+      let scope = a.force_scope ?? null;
+      let target = a.force_target;
+      let signals: string[] = [];
+      let confidence = 1;
+      let used_llm = false;
+      if (!scope) {
+        const heuristic = await classifyLesson(root, a.lesson);
+        scope = heuristic.scope;
+        target = heuristic.target;
+        signals = heuristic.signals;
+        confidence = heuristic.confidence;
+        if (a.hint_scope && (heuristic.ambiguous || confidence < 0.8)) {
+          scope = a.hint_scope;
+          target = a.hint_target ?? target;
+          signals.push("hint-applied");
+        }
+        if (!a.no_llm && (heuristic.ambiguous || confidence < 0.8)) {
+          const llm = await llmClassify(
+            root,
+            a.lesson,
+            heuristic.candidates,
+            heuristic.signals,
+            { scope, target, reason: "heuristic fallback" },
+          );
+          scope = llm.decision.scope;
+          target = llm.decision.target ?? target;
+          used_llm = llm.used_llm;
+          if (llm.used_llm) signals.push("llm");
+        }
+      } else if (scope !== "global" && !target) {
+        throw new Error(`force_scope=${scope} requires force_target`);
+      } else {
+        signals = ["forced"];
+      }
+      if (a.dry_run) {
+        return {
+          scope,
+          target,
+          path: scope === "global" ? "CLAUDE.md" : "<dry-run>",
+          id: "<dry-run>",
+          signals,
+          confidence,
+          used_llm,
+          dry_run: true,
+        };
+      }
+      const persisted = await persistLesson(root, {
+        scope,
+        target,
+        lesson: a.lesson,
+        evidence: a.evidence,
+        severity: a.severity,
+        classifier: { signals, confidence, used_llm },
+      });
+      return {
+        ...persisted,
+        signals,
+        confidence,
+        used_llm,
+        dry_run: false,
+      };
+    }
+    case "lessons_list": {
+      const a = args as { scope?: "global" | "symbol" | "file" | "feature"; target?: string };
+      const lessons = await listLessons(root, a);
+      return { lessons };
+    }
+    case "reclassify_lesson": {
+      const a = args as {
+        id: string;
+        to_scope: "global" | "symbol" | "file" | "feature";
+        to_target?: string;
+      };
+      return reclassifyLesson(root, a);
     }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };

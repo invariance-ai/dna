@@ -9,12 +9,27 @@ import {
 } from "@invariance/dna-schemas";
 
 const DIR = ".dna/notes";
+const FILE_DIR = ".dna/notes/file";
+const FEATURE_DIR = ".dna/notes/feature";
 
 function fileFor(root: string, symbol: string): string {
   // Symbols can contain `.` (Stripe.refunds.create) or `/` (path/to/sym).
   // Sanitize for filenames.
   const safe = symbol.replace(/[/\\:]/g, "__").replace(/\./g, "_");
   return path.join(root, DIR, `${safe}.yml`);
+}
+
+function slugifyPath(p: string): string {
+  return p.replace(/^\.\//, "").replace(/[/\\]/g, "__").replace(/\./g, "_");
+}
+
+function fileNotePath(root: string, file: string): string {
+  return path.join(root, FILE_DIR, `${slugifyPath(file)}.yml`);
+}
+
+function featureNotePath(root: string, label: string): string {
+  // labels are kebab-case already; lowercase to be safe
+  return path.join(root, FEATURE_DIR, `${label.toLowerCase()}.yml`);
 }
 
 export async function loadNotes(root: string, symbol: string): Promise<NoteT[]> {
@@ -68,6 +83,203 @@ export function rankNotes(notes: NoteT[], limit = 5, includePromoted = false): N
       return b.recorded_at.localeCompare(a.recorded_at);
     })
     .slice(0, limit);
+}
+
+export async function loadFileNotes(root: string, file: string): Promise<NoteT[]> {
+  try {
+    const raw = await readFile(fileNotePath(root, file), "utf8");
+    const data = parseYaml(raw);
+    if (!Array.isArray(data)) return [];
+    return data.map((d: unknown) => Note.parse(d));
+  } catch {
+    return [];
+  }
+}
+
+export interface AppendScopedOpts {
+  target: string;
+  lesson: string;
+  id: string;
+  evidence?: string;
+  severity?: NoteSeverity;
+  source?: NoteSource;
+  classifier?: NoteT["classifier"];
+}
+
+export async function appendFileNote(
+  root: string,
+  opts: AppendScopedOpts,
+): Promise<{ note: NoteT; file: string }> {
+  const note: NoteT = Note.parse({
+    symbol: opts.target,
+    lesson: opts.lesson,
+    evidence: opts.evidence,
+    severity: opts.severity ?? "medium",
+    promoted: false,
+    recorded_at: new Date().toISOString(),
+    source: opts.source ?? "agent",
+    id: opts.id,
+    scope: "file",
+    applies_to: opts.target,
+    classifier: opts.classifier,
+  });
+  const out = fileNotePath(root, opts.target);
+  await mkdir(path.dirname(out), { recursive: true });
+  const existing = await loadFileNotes(root, opts.target);
+  const next = [...existing, note];
+  await writeFile(out, stringifyYaml(next));
+  return { note, file: path.relative(root, out) };
+}
+
+export async function loadFeatureNotes(root: string, label: string): Promise<NoteT[]> {
+  try {
+    const raw = await readFile(featureNotePath(root, label), "utf8");
+    const data = parseYaml(raw);
+    if (!Array.isArray(data)) return [];
+    return data.map((d: unknown) => Note.parse(d));
+  } catch {
+    return [];
+  }
+}
+
+export async function appendFeatureNote(
+  root: string,
+  opts: AppendScopedOpts,
+): Promise<{ note: NoteT; file: string }> {
+  const note: NoteT = Note.parse({
+    symbol: opts.target,
+    lesson: opts.lesson,
+    evidence: opts.evidence,
+    severity: opts.severity ?? "medium",
+    promoted: false,
+    recorded_at: new Date().toISOString(),
+    source: opts.source ?? "agent",
+    id: opts.id,
+    scope: "feature",
+    applies_to: opts.target,
+    classifier: opts.classifier,
+  });
+  const out = featureNotePath(root, opts.target);
+  await mkdir(path.dirname(out), { recursive: true });
+  const existing = await loadFeatureNotes(root, opts.target);
+  const next = [...existing, note];
+  await writeFile(out, stringifyYaml(next));
+  return { note, file: path.relative(root, out) };
+}
+
+/**
+ * Walk a notes dir, returning [target, notes] pairs. Used by lessons listers.
+ */
+async function loadScopedDir(
+  root: string,
+  rel: string,
+  unslug: (slug: string) => string,
+): Promise<Array<{ target: string; notes: NoteT[]; path: string }>> {
+  try {
+    const dir = path.join(root, rel);
+    const files = await readdir(dir);
+    const out: Array<{ target: string; notes: NoteT[]; path: string }> = [];
+    for (const f of files) {
+      if (!f.endsWith(".yml")) continue;
+      const raw = await readFile(path.join(dir, f), "utf8");
+      const data = parseYaml(raw);
+      if (!Array.isArray(data)) continue;
+      const notes: NoteT[] = [];
+      for (const d of data) {
+        try {
+          notes.push(Note.parse(d));
+        } catch {
+          /* skip malformed */
+        }
+      }
+      out.push({
+        target: unslug(f.replace(/\.yml$/, "")),
+        notes,
+        path: path.relative(root, path.join(dir, f)),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export async function loadAllFileNotes(
+  root: string,
+): Promise<Array<{ target: string; notes: NoteT[]; path: string }>> {
+  return loadScopedDir(root, FILE_DIR, (slug) =>
+    slug.replace(/__/g, "/").replace(/_/g, "."),
+  );
+}
+
+export async function loadAllFeatureNotes(
+  root: string,
+): Promise<Array<{ target: string; notes: NoteT[]; path: string }>> {
+  return loadScopedDir(root, FEATURE_DIR, (slug) => slug);
+}
+
+export async function removeNoteById(
+  root: string,
+  id: string,
+): Promise<{ note: NoteT; path: string } | null> {
+  const checks: Array<{
+    dirRel: string;
+    loader: (root: string, target: string) => Promise<NoteT[]>;
+    pathFor: (root: string, target: string) => string;
+    unslug: (slug: string) => string;
+  }> = [
+    {
+      dirRel: DIR,
+      loader: loadNotes,
+      pathFor: fileFor,
+      unslug: (s) => s.replace(/__/g, "/").replace(/_/g, "."),
+    },
+    {
+      dirRel: FILE_DIR,
+      loader: loadFileNotes,
+      pathFor: fileNotePath,
+      unslug: (s) => s.replace(/__/g, "/").replace(/_/g, "."),
+    },
+    {
+      dirRel: FEATURE_DIR,
+      loader: loadFeatureNotes,
+      pathFor: featureNotePath,
+      unslug: (s) => s,
+    },
+  ];
+  for (const { dirRel, loader, pathFor, unslug } of checks) {
+    try {
+      const dir = path.join(root, dirRel);
+      const files = await readdir(dir);
+      for (const f of files) {
+        if (!f.endsWith(".yml")) continue;
+        const target = unslug(f.replace(/\.yml$/, ""));
+        const notes = await loader(root, target);
+        const hit = notes.find((n) => n.id === id);
+        if (!hit) continue;
+        const next = notes.filter((n) => n.id !== id);
+        const filePath = pathFor(root, target);
+        if (next.length === 0) {
+          await unlinkSafe(filePath);
+        } else {
+          await writeFile(filePath, stringifyYaml(next));
+        }
+        return { note: hit, path: path.relative(root, filePath) };
+      }
+    } catch {
+      /* dir missing, continue */
+    }
+  }
+  return null;
+}
+
+async function unlinkSafe(p: string): Promise<void> {
+  try {
+    const { unlink } = await import("node:fs/promises");
+    await unlink(p);
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function loadAllNotes(root: string): Promise<NoteT[]> {
