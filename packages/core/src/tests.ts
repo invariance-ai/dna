@@ -39,6 +39,26 @@ export function frameworkFor(file: string): TestRef["framework"] {
   return "unknown";
 }
 
+const testFileCache = new Map<string, string>();
+
+export function clearTestFileCache(): void {
+  testFileCache.clear();
+}
+
+async function readTestFile(root: string, rel: string): Promise<string> {
+  const key = `${root}::${rel}`;
+  const cached = testFileCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const src = await readFile(path.join(root, rel), "utf8");
+    testFileCache.set(key, src);
+    return src;
+  } catch {
+    testFileCache.set(key, "");
+    return "";
+  }
+}
+
 export async function testsForSymbol(
   symbol: string,
   symbolFile: string,
@@ -61,14 +81,9 @@ export async function testsForSymbol(
   ]);
 
   for (const t of candidates) {
-    let covers = false;
-    let isColo = coLocated.has(t);
-    try {
-      const src = await readFile(path.join(root, t), "utf8");
-      if (src.includes(symbol)) covers = true;
-    } catch {
-      // ignore
-    }
+    const isColo = coLocated.has(t);
+    const src = await readTestFile(root, t);
+    const covers = src.length > 0 && src.includes(symbol);
     if (covers || isColo) {
       out.push({
         file: t,

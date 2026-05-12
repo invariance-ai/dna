@@ -39,11 +39,26 @@ export async function writeIndex(root: string, index: DnaIndex): Promise<void> {
   const p = indexPath(root);
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(index, null, 2));
+  indexCache.delete(p);
+}
+
+const indexCache = new Map<string, { mtimeMs: number; size: number; index: DnaIndex }>();
+
+export function clearIndexCache(): void {
+  indexCache.clear();
 }
 
 export async function readIndex(root: string): Promise<DnaIndex> {
-  const raw = await readFile(indexPath(root), "utf8");
-  return JSON.parse(raw) as DnaIndex;
+  const p = indexPath(root);
+  const st = await stat(p);
+  const cached = indexCache.get(p);
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+    return cached.index;
+  }
+  const raw = await readFile(p, "utf8");
+  const index = JSON.parse(raw) as DnaIndex;
+  indexCache.set(p, { mtimeMs: st.mtimeMs, size: st.size, index });
+  return index;
 }
 
 export interface StaleReport {

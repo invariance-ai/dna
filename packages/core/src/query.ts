@@ -11,7 +11,9 @@ import type {
 } from "@invariance/dna-schemas";
 import { readIndex, type DnaIndex } from "./index_store.js";
 import { loadInvariants, invariantsFor } from "./invariants.js";
-import { testsForSymbol } from "./tests.js";
+import { testsForSymbol, testFilesIn, frameworkFor } from "./tests.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { logForFile, churn, isGitRepo } from "./git.js";
 import { loadNotes, rankNotes } from "./notes.js";
 import { loadDecisions, rankDecisions } from "./decisions.js";
@@ -22,13 +24,65 @@ import { neighborhood, type NeighborEntry } from "./neighborhood.js";
 import { classifyIntent, excludeForIntent } from "./intent.js";
 import { loadAssumptions } from "./assumptions.js";
 import { gapsForSymbol, type TestGap } from "./testgaps.js";
-import type { Assumption } from "@invariance/dna-schemas";
-import type { Question, Decision, Note } from "@invariance/dna-schemas";
+import { loadPreferences, rankPreferences } from "./preferences.js";
+import type { Assumption, Question, Decision, Note } from "@invariance/dna-schemas";
+
+interface IndexLookups {
+  byId: Map<string, SymbolRef>;
+  byQualified: Map<string, SymbolRef>;
+  byName: Map<string, SymbolRef[]>;
+  byNameLower: Map<string, SymbolRef>;
+  callers: Map<string, string[]>; // sym key -> from keys
+  callees: Map<string, string[]>; // sym key -> to keys
+}
 
 export interface QueryContext {
   root: string;
   index: DnaIndex;
   invariants: Invariant[];
+  _lookups?: IndexLookups;
+}
+
+function symKey(s: SymbolRef): string {
+  return s.id ?? s.qualified_name ?? s.name;
+}
+
+function buildLookups(index: DnaIndex): IndexLookups {
+  const byId = new Map<string, SymbolRef>();
+  const byQualified = new Map<string, SymbolRef>();
+  const byName = new Map<string, SymbolRef[]>();
+  const byNameLower = new Map<string, SymbolRef>();
+  for (const s of index.symbols) {
+    if (s.id) byId.set(s.id, s);
+    if (s.qualified_name && !byQualified.has(s.qualified_name)) byQualified.set(s.qualified_name, s);
+    const list = byName.get(s.name);
+    if (list) list.push(s);
+    else byName.set(s.name, [s]);
+    const lower = s.name.toLowerCase();
+    if (!byNameLower.has(lower)) byNameLower.set(lower, s);
+    if (s.qualified_name) {
+      const qlower = s.qualified_name.toLowerCase();
+      if (!byNameLower.has(qlower)) byNameLower.set(qlower, s);
+    }
+  }
+  const callers = new Map<string, string[]>();
+  const callees = new Map<string, string[]>();
+  for (const e of index.edges) {
+    const from = e.from_id ?? e.from;
+    const to = e.to_id ?? e.to;
+    const list1 = callers.get(to);
+    if (list1) list1.push(from);
+    else callers.set(to, [from]);
+    const list2 = callees.get(from);
+    if (list2) list2.push(to);
+    else callees.set(from, [to]);
+  }
+  return { byId, byQualified, byName, byNameLower, callers, callees };
+}
+
+function lookups(ctx: QueryContext): IndexLookups {
+  if (!ctx._lookups) ctx._lookups = buildLookups(ctx.index);
+  return ctx._lookups;
 }
 
 export async function open(root: string): Promise<QueryContext> {
@@ -38,43 +92,65 @@ export async function open(root: string): Promise<QueryContext> {
 }
 
 export function resolveSymbol(query: string, ctx: QueryContext): SymbolRef | null {
-  const byId = ctx.index.symbols.find((s) => s.id === query);
+  const L = lookups(ctx);
+  const byId = L.byId.get(query);
   if (byId) return byId;
-  const byQualified = ctx.index.symbols.find((s) => s.qualified_name === query);
+  const byQualified = L.byQualified.get(query);
   if (byQualified) return byQualified;
-  const exact = ctx.index.symbols.find((s) => s.name === query);
-  if (exact) return exact;
-  const q = query.toLowerCase();
-  const ci = ctx.index.symbols.find(
-    (s) => s.name.toLowerCase() === q || s.qualified_name?.toLowerCase() === q,
-  );
-  return ci ?? null;
+  const byNameList = L.byName.get(query);
+  const first = byNameList?.[0];
+  if (first) return first;
+  return L.byNameLower.get(query.toLowerCase()) ?? null;
+}
+
+function resolveByKey(key: string, L: IndexLookups): SymbolRef | undefined {
+  return L.byId.get(key) ?? L.byQualified.get(key) ?? L.byName.get(key)?.[0];
 }
 
 export function callersOf(symbol: SymbolRef | string, ctx: QueryContext): SymbolRef[] {
+  const L = lookups(ctx);
   const sym = typeof symbol === "string" ? resolveSymbol(symbol, ctx) : symbol;
   if (!sym) return [];
-  const fromIds = new Set(
-    ctx.index.edges
-      .filter((e) => e.to_id ? e.to_id === sym.id : e.to === (sym.qualified_name ?? sym.name))
-      .map((e) => e.from_id ?? e.from),
-  );
-  return [...fromIds]
-    .map((id) => ctx.index.symbols.find((s) => s.id === id || s.qualified_name === id || s.name === id))
-    .filter((s): s is SymbolRef => !!s);
+  const keys: string[] = [];
+  if (sym.id) keys.push(sym.id);
+  const qn = sym.qualified_name ?? sym.name;
+  if (qn !== sym.id) keys.push(qn);
+  const seen = new Set<string>();
+  const out: SymbolRef[] = [];
+  for (const key of keys) {
+    const list = L.callers.get(key);
+    if (!list) continue;
+    for (const k of list) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const r = resolveByKey(k, L);
+      if (r) out.push(r);
+    }
+  }
+  return out;
 }
 
 export function calleesOf(symbol: SymbolRef | string, ctx: QueryContext): SymbolRef[] {
+  const L = lookups(ctx);
   const sym = typeof symbol === "string" ? resolveSymbol(symbol, ctx) : symbol;
   if (!sym) return [];
-  const toIds = new Set(
-    ctx.index.edges
-      .filter((e) => e.from_id ? e.from_id === sym.id : e.from === (sym.qualified_name ?? sym.name))
-      .map((e) => e.to_id ?? e.to),
-  );
-  return [...toIds]
-    .map((id) => ctx.index.symbols.find((s) => s.id === id || s.qualified_name === id || s.name === id))
-    .filter((s): s is SymbolRef => !!s);
+  const keys: string[] = [];
+  if (sym.id) keys.push(sym.id);
+  const qn = sym.qualified_name ?? sym.name;
+  if (qn !== sym.id) keys.push(qn);
+  const seen = new Set<string>();
+  const out: SymbolRef[] = [];
+  for (const key of keys) {
+    const list = L.callees.get(key);
+    if (!list) continue;
+    for (const k of list) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const r = resolveByKey(k, L);
+      if (r) out.push(r);
+    }
+  }
+  return out;
 }
 
 export async function getContext(
@@ -86,8 +162,9 @@ export async function getContext(
   if (!sym) throw new Error(`symbol not found: ${args.symbol}`);
 
   const wants = new Set(args.strands);
-  const callers = wants.has("structural") ? callersOf(sym, ctx) : [];
-  const callees = wants.has("structural") ? calleesOf(sym, ctx) : [];
+  const MAX_NEIGHBORS = 25;
+  const callers = wants.has("structural") ? callersOf(sym, ctx).slice(0, MAX_NEIGHBORS) : [];
+  const callees = wants.has("structural") ? calleesOf(sym, ctx).slice(0, MAX_NEIGHBORS) : [];
   const tests = wants.has("tests") ? await testsForSymbol(sym.name, sym.file, ctx.root, ctx.index) : [];
   let provenance =
     wants.has("provenance") && (await isGitRepo(ctx.root))
@@ -118,10 +195,12 @@ export async function getContext(
   }
   const notes = rankNotes(notesFiltered, 5);
   const decisions = rankDecisions(decisionsFiltered, 3);
+  const prefsAll = await loadPreferences(ctx.root);
+  const preferences = rankPreferences(prefsAll, sym.name, sym.file, 5);
 
   const risk = computeRisk({ callers, tests, invariants, churn: await safeChurn(ctx.root, sym.file) });
 
-  return { symbol: sym, callers, callees, tests, provenance, invariants, notes, decisions, risk };
+  return { symbol: sym, callers, callees, tests, provenance, invariants, notes, decisions, preferences, risk };
 }
 
 export async function impactOf(
@@ -152,15 +231,32 @@ export async function impactOf(
   }
   visited.delete(sym.id ?? sym.qualified_name ?? sym.name);
 
+  const L = lookups(ctx);
   const affected_symbols = [...visited]
-    .map((id) => ctx.index.symbols.find((s) => s.id === id || s.qualified_name === id || s.name === id))
+    .map((id) => resolveByKey(id, L))
     .filter((s): s is SymbolRef => !!s);
   const affected_files = [...new Set(affected_symbols.map((s) => s.file))];
+
+  // Batch test discovery: read each test file at most once, scan once for any
+  // of the affected symbol names. Cuts O(N_symbols × F_tests) to O(F_tests).
+  const names = new Set(affected_symbols.map((a) => a.name).filter((n) => n.length > 2));
+  const candidates = testFilesIn(ctx.index);
   const affected_tests: TestRef[] = [];
-  for (const a of affected_symbols) {
-    const ts = await testsForSymbol(a.name, a.file, ctx.root, ctx.index);
-    for (const t of ts) if (!affected_tests.find((x) => x.file === t.file)) affected_tests.push(t);
-  }
+  await Promise.all(
+    candidates.map(async (t) => {
+      try {
+        const src = await readFile(path.join(ctx.root, t), "utf8");
+        for (const n of names) {
+          if (src.includes(n)) {
+            affected_tests.push({ file: t, framework: frameworkFor(t), symbols_covered: [n] });
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }),
+  );
 
   return {
     symbol: sym,
@@ -219,6 +315,7 @@ export async function prepareEdit(
     invariants_to_respect: c.invariants,
     notes: filteredNotes,
     decisions: filteredDecisions,
+    preferences: c.preferences,
     tests_to_run: c.tests.map((t) => t.file),
     risk: c.risk,
   };
@@ -302,6 +399,14 @@ function formatPrepareEdit(
     items: c.notes.map((n) => {
       const ev = n.evidence ? `\n  - evidence: ${n.evidence}` : "";
       return `- **[${n.severity}]** ${n.lesson}${ev}`;
+    }),
+  });
+
+  add("preferences", {
+    heading: "## User preferences that apply",
+    items: c.preferences.map((p) => {
+      const ev = p.evidence ? `\n  - evidence: ${p.evidence}` : "";
+      return `- ${p.text}${ev}`;
     }),
   });
 

@@ -115,6 +115,34 @@ const STOP_PREFIXES = [
   /^now\s+/i,
 ];
 
+export function rankPreferences(
+  prefs: PreferenceT[],
+  symbolName: string,
+  file: string,
+  limit = 5,
+): PreferenceT[] {
+  if (prefs.length === 0) return [];
+  const sym = symbolName.toLowerCase();
+  const fileSeg = file.toLowerCase();
+  const scored = prefs.map((p) => {
+    const t = p.text.toLowerCase();
+    const topic = (p.topic ?? "").toLowerCase();
+    let score = 0;
+    if (sym && (t.includes(sym) || topic.includes(sym))) score += 3;
+    for (const seg of fileSeg.split(/[\/\\.]/).filter((s) => s.length > 3)) {
+      if (t.includes(seg) || topic.includes(seg)) score += 1;
+    }
+    if (p.scope === "repo" || p.scope === "global") score += 0.5;
+    score += Math.min((p.hits ?? 0) * 0.1, 1);
+    return { p, score };
+  });
+  return scored
+    .filter((s) => s.score > 0.5)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => s.p);
+}
+
 export interface ExtractedPreference {
   text: string;
   cue: string;

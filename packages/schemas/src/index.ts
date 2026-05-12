@@ -218,6 +218,7 @@ export const ContextResult = z.object({
   invariants: z.array(Invariant),
   notes: z.array(Note).default([]),
   decisions: z.array(Decision).default([]),
+  preferences: z.array(Preference).default([]),
   risk: z.enum(["low", "medium", "high"]),
 });
 export type ContextResult = z.infer<typeof ContextResult>;
@@ -350,6 +351,7 @@ export const PrepareEditResult = z.object({
   invariants_to_respect: z.array(Invariant),
   notes: z.array(Note).default([]),
   decisions: z.array(Decision).default([]),
+  preferences: z.array(Preference).default([]),
   tests_to_run: z.array(z.string()),
   risk: z.enum(["low", "medium", "high"]),
 });

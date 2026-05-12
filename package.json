@@ -13,7 +13,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "dev": "pnpm -r --parallel dev"
+    "dev": "pnpm -r --parallel dev",
+    "bench:perf": "tsx bench/perf/run.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
