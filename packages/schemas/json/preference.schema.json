@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/invariance-ai/dna/schemas/preference.schema.json",
+  "title": "dna preference",
+  "$ref": "#/definitions/dna preference",
+  "definitions": {
+    "dna preference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "repo",
+            "user",
+            "global"
+          ],
+          "default": "repo"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "auto",
+            "wizard"
+          ],
+          "default": "manual"
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
