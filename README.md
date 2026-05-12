@@ -11,15 +11,21 @@ Three inputs compound on a single symbol graph:
 
 Day one, dna is useful for context. Six months in, the notes-and-invariants layer is an asset every new engineer and every new agent depends on. Operational reality, encoded and made queryable. That's the thesis.
 
-## Why this works where giant `CLAUDE.md` files don't
+## Measured impact
 
-| Approach | KB size 10k | 50k | 200k |
-|---|---|---|---|
-| Global `CLAUDE.md` (always loaded) | 10k tok/turn | 50k tok/turn | impossible |
-| Vector RAG over KB | 3-5k tok/turn | 3-5k tok/turn | lossy |
-| **dna (anchored to symbols)** | **~300 tok/turn** | **~400 tok/turn** | **~600 tok/turn** |
+Real repo benchmark on `invariance-platform` (1832 symbols, 309 source files): 10 developer questions, run twice per side with order-swapped blinded A/B judging by Claude Sonnet 4.6. Same SHA, same model (Claude Opus 4.7), same prompts — only difference is whether dna's hooks and index are present.
 
-dna only surfaces the slice attached to the symbol being edited. The graph does the retrieval; vectors aren't needed.
+| Dimension | Baseline | dna |
+|---|---:|---:|
+| Correctness (1–5) | 4.15 | **4.20** |
+| Specificity (1–5) | 4.15 | **4.70** |
+| Completeness (1–5) | 3.80 | **4.50** |
+| **Overall** | **4.03** | **4.47** (+11%) |
+| Blinded wins (n=19) | 6 | **13** |
+
+dna answers cite real symbols and line numbers (`replayRun:14`, `applyMutations:58`) where baseline hand-waves at file-level. Methodology and per-prompt data: [`bench/dogfood/2026-05-12-platform-tokens-quality.md`](bench/dogfood/2026-05-12-platform-tokens-quality.md).
+
+Token cost was flat (+1.4% input, longer output) — dna's value is *what the agent sees*, not how much.
 
 ## Quickstart
 
@@ -30,11 +36,14 @@ cd your-repo
 npx -y @invariance/dna init                # writes .dna/config.yml + .dna/invariants.yml
 npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks
 npx -y @invariance/dna install codex       # writes AGENTS.md + .codex/config.toml (notify + MCP)
+npx -y @invariance/dna install cursor      # writes .cursor/rules/dna.mdc + .cursor/mcp.json
 npx -y @invariance/dna index               # builds the symbol graph
 npx -y @invariance/dna learn-todos         # bootstrap notes from existing TODO/FIXME
 ```
 
-Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so the generated hooks call `dna` directly instead of `npx`.
+Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so generated hooks/MCP entries call `dna` directly instead of `npx`.
+
+Want the long version? See [`docs/guide/getting-started.md`](docs/guide/getting-started.md) for the 10-minute walkthrough, [`docs/guide/commands.md`](docs/guide/commands.md) for the full CLI reference, and [`docs/guide/agents/`](docs/guide/agents/) for per-IDE setup details.
 
 ## CLI
 
@@ -70,20 +79,26 @@ dna suggest                                           # surface symbols agents a
 
 All read commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when piped.
 
-## Claude Code and Codex: CLI first
+## Claude Code, Codex, Cursor: CLI first
 
-Claude Code and Codex agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
+Coding agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
 
-For Claude Code, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
+For **Claude Code**, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
 
 ```bash
 npx -y @invariance/dna install claude
 ```
 
-For Codex CLI, the installer writes `AGENTS.md` instructions, registers `dna serve` as an MCP server, and configures a `notify` hook that distills each turn:
+For **Codex CLI**, the installer writes `AGENTS.md` instructions, registers `dna serve` as an MCP server, and configures a `notify` hook that distills each turn:
 
 ```bash
 npx -y @invariance/dna install codex
+```
+
+For **Cursor**, the installer writes a `.cursor/rules/dna.mdc` always-attached rule and registers `dna serve` in `.cursor/mcp.json`:
+
+```bash
+npx -y @invariance/dna install cursor
 ```
 
 For any other shell-based agent, add this to the repo instructions:
@@ -189,7 +204,7 @@ Notes "deflate" over time — recurring ones get promoted to invariants, and dna
 | Cursor index | Embedded chunks | ❌ | ❌ | Closed |
 | Semgrep / CodeQL | Pattern findings | ❌ | Pattern-based (security) | Mixed |
 
-See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates (~82% fewer exploration tokens, ~53% fewer regressions vs grep-only across 30 simulated tasks).
+See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [bench/dogfood/2026-05-12-platform-tokens-quality.md](bench/dogfood/2026-05-12-platform-tokens-quality.md) for the real-repo benchmark.
 
 ## Native-agent prompt commands
 

@@ -14,13 +14,17 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "dev": "pnpm -r --parallel dev",
-    "bench:perf": "tsx bench/perf/run.ts"
+    "bench:perf": "tsx bench/perf/run.ts",
+    "gen:docs": "tsx scripts/gen-commands-doc.ts",
+    "gen:schemas": "tsx scripts/gen-json-schemas.ts",
+    "gen:check": "pnpm gen:docs && pnpm gen:schemas && git diff --exit-code docs/guide/commands.md packages/schemas/json"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "zod-to-json-schema": "^3.25.2"
   },
   "packageManager": "pnpm@10.0.0",
   "engines": {
