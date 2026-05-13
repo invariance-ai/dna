@@ -10,7 +10,11 @@
  * only needs to be made once.
  */
 
-const SHARED_AGENT_BLOCK = `\`dna\` is local repo memory: symbol graph, tests, invariants, lessons, decisions, and personal preferences. Hooks auto-fire dna on session start, on prompts, before/after edits, and on failures — you usually don't need to call dna by hand. Useful manual calls:
+const SHARED_AGENT_BLOCK = `\`dna\` is local repo memory: symbol graph, tests, invariants, lessons, decisions, and personal preferences. Hooks auto-fire dna on session start, on prompts, before/after edits, and on failures — you usually don't need to call dna by hand.
+
+**Before editing a non-trivial symbol, call the MCP tool \`prepare_edit\` first** (it's exposed as \`mcp__dna__prepare_edit\` in Claude Code, or just \`prepare_edit\` in Cursor/Codex). The brief it returns — invariants, callers, tests, prior decisions — is what dna exists for; relying on Glob/Read/Grep alone is what dogfood measured as the +28% output / no quality-win path. Treat \`prepare_edit\` like a code-search call you make *before* exploration, not after.
+
+Useful manual calls:
 
 \`\`\`bash
 dna find "<keyword>"               # locate existing helpers before writing new ones
@@ -51,9 +55,16 @@ description: Use the dna CLI to fetch repo context, impact, tests, invariants, n
 
 # dna
 
-Use \`dna\` as a shell-first repo context tool. Prefer the CLI surface.
+Prefer the MCP tool surface in Claude Code: \`mcp__dna__prepare_edit\` returns
+a decision-ready brief in one structured call and is cheaper than fanning out
+to Glob/Read/Grep first. Fall back to the CLI when you're outside a tool
+context (e.g. inside a Bash command):
 
-Before editing a non-trivial symbol, run:
+\`\`\`text
+mcp__dna__prepare_edit { "symbol": "<symbol>", "intent": "<short intent>" }
+\`\`\`
+
+CLI equivalent:
 
 \`\`\`bash
 dna prepare <symbol> --intent "<short intent>"

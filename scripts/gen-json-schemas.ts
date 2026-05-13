@@ -9,7 +9,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { Invariant, Note, Decision, Preference } from "../packages/schemas/src/index.js";
+import {
+  Invariant,
+  Note,
+  Decision,
+  Preference,
+  PrepareEditResult,
+} from "../packages/schemas/src/index.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(HERE, "..", "packages", "schemas", "json");
@@ -37,6 +43,7 @@ const targets: Array<{ name: string; schema: z.ZodTypeAny; title: string }> = [
   { name: "note", schema: Note, title: "dna note" },
   { name: "decision", schema: Decision, title: "dna decision" },
   { name: "preference", schema: Preference, title: "dna preference" },
+  { name: "prepare-edit-result", schema: PrepareEditResult, title: "dna prepare_edit result (versioned)" },
 ];
 
 async function main(): Promise<void> {

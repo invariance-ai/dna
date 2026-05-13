@@ -26,6 +26,7 @@ import { loadAssumptions } from "./assumptions.js";
 import { gapsForSymbol, type TestGap } from "./testgaps.js";
 import { loadPreferences, rankPreferences } from "./preferences.js";
 import type { Assumption, Question, Decision, Note } from "@invariance/dna-schemas";
+import { PREPARE_EDIT_SCHEMA_VERSION } from "@invariance/dna-schemas";
 
 interface IndexLookups {
   byId: Map<string, SymbolRef>;
@@ -311,6 +312,7 @@ export async function prepareEdit(
     testGaps,
   });
   return {
+    schema_version: PREPARE_EDIT_SCHEMA_VERSION,
     markdown: md,
     invariants_to_respect: c.invariants,
     notes: filteredNotes,

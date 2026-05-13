@@ -439,7 +439,14 @@ export const PrepareEditInput = z.object({
   ),
 });
 export type PrepareEditInput = z.infer<typeof PrepareEditInput>;
+
+/**
+ * Versioned result so downstream tooling (CI, IDE plugins) can pin against a
+ * known shape. Bump the literal when the result fields change.
+ */
+export const PREPARE_EDIT_SCHEMA_VERSION = 1 as const;
 export const PrepareEditResult = z.object({
+  schema_version: z.literal(PREPARE_EDIT_SCHEMA_VERSION).default(PREPARE_EDIT_SCHEMA_VERSION),
   markdown: z.string(),
   invariants_to_respect: z.array(Invariant),
   notes: z.array(Note).default([]),

@@ -110,6 +110,7 @@ export async function runInstallClaude(root: string, opts: RunInstallClaudeOpts)
   for (const [file, content] of writes) {
     await writeManagedFile(root, file, content, opts.force);
   }
+  await upsertClaudeMcp(root, !!opts.useGlobal);
   if (!opts.skipClaudeMd) await upsertAgentMd(root, "CLAUDE.md");
 }
 
@@ -302,6 +303,33 @@ async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean):
     ? existing.replace(/# dna:start[\s\S]*?# dna:end\n?/m, block)
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${block}`;
   await writeFile(file, next);
+  console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
+}
+
+/**
+ * Merge a `dna` entry into `.mcp.json` at the repo root. Claude Code reads
+ * this file at session start; we own only the `mcpServers.dna` key and leave
+ * the rest of the JSON intact so users can mix in other MCP servers.
+ *
+ * This is what makes the SKILL.md `prepare_edit` advice actually callable —
+ * without `.mcp.json`, the MCP tools are not exposed to the Claude agent.
+ */
+async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> {
+  const file = path.join(root, ".mcp.json");
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(file, "utf8");
+    existing = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // create below
+  }
+  const servers =
+    (existing.mcpServers as Record<string, unknown> | undefined) ?? {};
+  servers.dna = useGlobal
+    ? { command: "dna", args: ["serve"] }
+    : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
+  const next = { ...existing, mcpServers: servers };
+  await writeFile(file, JSON.stringify(next, null, 2) + "\n");
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }
 
