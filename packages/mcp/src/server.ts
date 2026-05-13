@@ -27,6 +27,27 @@ import {
   persistLesson,
   listLessons,
   reclassifyLesson,
+  gate,
+  auditSession,
+  featureHealth,
+  allFeatureHealth,
+  findConflicts,
+  findStale,
+  appendQuestion,
+  setStatus as setQuestionStatus,
+  loadAllQuestions,
+  loadQuestions,
+  filterByStatus as filterQuestionsByStatus,
+  appendAssumption,
+  loadAssumptions,
+  rankContributors,
+  addPreference,
+  loadPreferences,
+  buildContract,
+  saveContract,
+  verifyContract,
+  findRejectedConflicts,
+  findPromotionCandidates,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -235,6 +256,129 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         .sort((a, b) => b.score - a.score)
         .slice(0, a.limit ?? 10);
       return { candidates: cands };
+    }
+    case "gate_check": {
+      const a = args as { base?: string; files?: string[] };
+      const result = await gate(root, a);
+      return {
+        base: result.base,
+        changed_files: result.changed_files,
+        changed_symbols: result.changed_symbols,
+        hits: result.hits.map((h) => ({
+          invariant: h.invariant,
+          symbols: h.symbols,
+          files: h.files,
+          waived: h.waived,
+        })),
+        blocking: result.blocking.map((h) => ({
+          invariant: h.invariant,
+          symbols: h.symbols,
+          files: h.files,
+          waived: h.waived,
+        })),
+      };
+    }
+    case "audit_session": {
+      const report = await auditSession(root);
+      return report;
+    }
+    case "feature_health": {
+      const a = args as { feature?: string };
+      if (a.feature) {
+        const h = await featureHealth(root, a.feature);
+        return { features: h ? [h] : [] };
+      }
+      return { features: await allFeatureHealth(root) };
+    }
+    case "find_conflicts": {
+      const a = args as { symbol: string };
+      const conflicts = await findConflicts(root, a.symbol);
+      return { symbol: a.symbol, conflicts };
+    }
+    case "find_stale": {
+      const a = args as { days?: number; feature?: string };
+      const entries = await findStale(root, a);
+      return { entries };
+    }
+    case "record_question": {
+      const a = args as Parameters<typeof appendQuestion>[1];
+      return appendQuestion(root, a);
+    }
+    case "questions_for": {
+      const a = args as { symbol?: string; status?: "unresolved" | "resolved" | "wontfix" };
+      const qs = a.symbol
+        ? await loadQuestions(root, a.symbol)
+        : await loadAllQuestions(root);
+      return { questions: filterQuestionsByStatus(qs, a.status) };
+    }
+    case "resolve_question": {
+      const a = args as {
+        symbol: string;
+        id: string;
+        status: "unresolved" | "resolved" | "wontfix";
+        resolution?: string;
+      };
+      const updated = await setQuestionStatus(root, a.symbol, a.id, a.status, a.resolution);
+      return { question: updated };
+    }
+    case "record_assumption": {
+      const a = args as Parameters<typeof appendAssumption>[1];
+      return appendAssumption(root, a);
+    }
+    case "assumptions_for": {
+      const a = args as { symbol: string };
+      const assumptions = await loadAssumptions(root, a.symbol);
+      return { symbol: a.symbol, assumptions };
+    }
+    case "contributors_for": {
+      const a = args as { symbol: string };
+      const contributors = await rankContributors(root, a.symbol);
+      return { symbol: a.symbol, contributors };
+    }
+    case "record_preference": {
+      const a = args as Parameters<typeof addPreference>[1];
+      return addPreference(root, a);
+    }
+    case "preferences_list": {
+      const preferences = await loadPreferences(root);
+      return { preferences };
+    }
+    case "build_contract": {
+      const a = args as { symbol: string; intent?: string; save?: boolean };
+      const contract = await buildContract(root, { symbol: a.symbol, intent: a.intent });
+      const shouldSave = a.save ?? true;
+      if (shouldSave) await saveContract(root, contract);
+      return { contract, saved: shouldSave };
+    }
+    case "verify_contract": {
+      const a = args as { base?: string };
+      const result = await verifyContract(root, a.base ?? "HEAD");
+      if (!result) return { contract: undefined, diff_files: [], diff_symbols: [], violations: [] };
+      return result;
+    }
+    case "check_proposal": {
+      const a = args as {
+        symbol?: string;
+        proposal: string;
+        threshold?: number;
+        limit?: number;
+      };
+      const matches = await findRejectedConflicts(root, a.proposal, {
+        symbol: a.symbol,
+        threshold: a.threshold,
+        limit: a.limit,
+      });
+      return { matches };
+    }
+    case "promotion_candidates": {
+      const a = args as { symbol: string; min_occurrences?: number; threshold?: number };
+      const candidates = await findPromotionCandidates(
+        root,
+        a.symbol,
+        a.min_occurrences,
+        a.threshold,
+      );
+      return { candidates };
     }
     default:
       throw new Error(`Tool ${name} dispatch not implemented`);
