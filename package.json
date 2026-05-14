@@ -19,6 +19,9 @@
     "bench:compare:self": "tsx bench/perf/compare-all.ts --corpus self --skip-cmm --skip-accuracy",
     "bench:compare:flask": "tsx bench/perf/compare-all.ts --corpus flask",
     "bench:compare:django": "tsx bench/perf/compare-all.ts --corpus django -n 8",
+    "gen:docs": "tsx scripts/gen-commands-doc.ts",
+    "gen:schemas": "tsx scripts/gen-json-schemas.ts",
+    "gen:check": "pnpm gen:docs && pnpm gen:schemas && git diff --exit-code docs/guide/commands.md packages/schemas/json",
     "release": "tsx scripts/release.ts",
     "release:check": "tsx scripts/release.ts --check"
   },
@@ -26,7 +29,8 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "zod-to-json-schema": "^3.25.2"
   },
   "packageManager": "pnpm@10.0.0",
   "engines": {

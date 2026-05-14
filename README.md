@@ -2,7 +2,20 @@
 
 > The repo that gets smarter every time you use it.
 
-`dna` is **organizational memory with a code interface**. It gives Claude Code, Codex, Cursor — any coding agent — a compact, evidence-backed map of your repo before it changes code: symbols, callers and callees, tests that protect each function, recent git history, declarative invariants you author once ("refunds over $1000 require finance approval"), and **lessons learned from previous edits** that agents and humans persist as they go.
+`dna` gives coding agents — Claude Code, Codex, Cursor — the slice of repo context they'd otherwise miss: symbols, callers and callees, tests that protect each function, recent git history, declarative invariants you author once ("refunds over $1000 require finance approval"), and **lessons learned from previous edits** that agents and humans persist as they go. Anchored to symbols, recorded once, surfaced when relevant.
+
+In a blinded judge run against vanilla Claude Code on a real internal repo (309 source files, 10 prompts, Sonnet judge, A/B-swapped), **dna answers won 13 of 19 valid comparisons (+11% overall quality)**:
+
+| dimension | baseline | dna |
+|---|---:|---:|
+| correctness | 4.15 | **4.20** |
+| specificity | 4.15 | **4.70** |
+| completeness | 3.80 | **4.50** |
+| **overall (1–5)** | **4.03** | **4.47** |
+
+Methodology and raw numbers: [`bench/dogfood/2026-05-12-invariance-platform.md`](bench/dogfood/2026-05-12-invariance-platform.md).
+
+**Tokens aren't the story.** `claude -p` explores via Glob/Read regardless of injected context; dna is additive there (+1.4% input tokens on the run above). The win is what the agent does *with* that exploration — dna answers cite real symbols and line numbers (`replayRun:14`, `applyMutations:58`) where baseline hand-waves at file-level.
 
 Three inputs compound on a single symbol graph:
 1. **Static structure** — calls, callers, tests, provenance (the spine)
@@ -11,16 +24,6 @@ Three inputs compound on a single symbol graph:
 
 Day one, dna is useful for context. Six months in, the notes-and-invariants layer is an asset every new engineer and every new agent depends on. Operational reality, encoded and made queryable. That's the thesis.
 
-## Why this works where giant `CLAUDE.md` files don't
-
-| Approach | KB size 10k | 50k | 200k |
-|---|---|---|---|
-| Global `CLAUDE.md` (always loaded) | 10k tok/turn | 50k tok/turn | impossible |
-| Vector RAG over KB | 3-5k tok/turn | 3-5k tok/turn | lossy |
-| **dna (anchored to symbols)** | **~300 tok/turn** | **~400 tok/turn** | **~600 tok/turn** |
-
-dna only surfaces the slice attached to the symbol being edited. The graph does the retrieval; vectors aren't needed.
-
 ## Quickstart
 
 No install required — `npx` runs the latest published version each time:
@@ -28,15 +31,44 @@ No install required — `npx` runs the latest published version each time:
 ```bash
 cd your-repo
 npx -y @invariance/dna init                # writes .dna/config.yml + .dna/invariants.yml
-npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks
+npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks + .mcp.json
 npx -y @invariance/dna install codex       # writes AGENTS.md + .codex/config.toml (notify + MCP)
+npx -y @invariance/dna install cursor      # writes .cursor/rules/dna.mdc + .cursor/mcp.json
 npx -y @invariance/dna index               # builds the symbol graph
 npx -y @invariance/dna learn-todos         # bootstrap notes from existing TODO/FIXME
+npx -y @invariance/dna invariant init --stack stripe   # optional: drop in a starter pack
 ```
 
-Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so the generated hooks call `dna` directly instead of `npx`.
+Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so generated hooks/MCP entries call `dna` directly instead of `npx`.
+
+Want the long version? See [`docs/guide/getting-started.md`](docs/guide/getting-started.md) for the 10-minute walkthrough, [`docs/guide/commands.md`](docs/guide/commands.md) for the full CLI reference, and [`docs/guide/agents/`](docs/guide/agents/) for per-IDE setup details.
+
+## What dna is not (yet)
+
+Honest, up-front:
+
+- **Parser is regex-based** for TS/JS/Python — ~90% precision on typical code, lower on decorators-as-factories, dynamic dispatch, and heavy macros. Trade-off documented in [`packages/core/src/parser.ts:5`](packages/core/src/parser.ts). Tree-sitter (WASM) is the next accuracy step.
+- **No semantic import resolution.** Re-exports and barrel files may miss call edges.
+- **No cross-repo / monorepo-aware symbol IDs** yet — each repo is its own graph.
+- **Proof base is n=1.** The +11% quality win above is one repo, 10 prompts. We're running this against more repos next; see [`docs/dogfood-runbook.md`](docs/dogfood-runbook.md) and contribute a result.
 
 ## CLI
+
+### Start here — the Core 5
+
+The whole happy path is five commands:
+
+```bash
+dna init                                              # 1. write .dna/config.yml + invariants.yml
+dna install claude                                    # 2. wire CLAUDE.md + .claude hooks (or: install codex)
+dna index                                             # 3. build the symbol graph
+dna prepare <symbol> --intent "<one-liner>"           # 4. ⭐ decision-ready brief before edits
+dna learn <symbol> --lesson "<one sentence>"          # 5. record what an edit taught you
+```
+
+Everything below is the full surface for power users and automation.
+
+### Full command reference
 
 ```bash
 # Reading
@@ -62,6 +94,8 @@ dna serve --observe                                   # ⚡ opt-in: record per-s
 dna suggest                                           # surface symbols agents ask about repeatedly with no covering invariant
 ```
 
+Run `dna --help` for the full 49-command surface (postmortem, promote, gate, runtime, audit, …).
+
 ### Passive observer — opt-in, metadata only
 
 `dna serve --observe` records *which symbol was queried* and *when*, into `.dna/observations.json`. **Nothing else.** No tool arguments beyond the symbol name, no tool results, no conversation content. The privacy line: dna never persists what an agent asked or what it received — only that `createRefund` was looked at 6 times this week.
@@ -70,20 +104,26 @@ dna suggest                                           # surface symbols agents a
 
 All read commands accept `--json` (stable contract for tool chaining) or `--markdown` (LLM-optimal). ANSI colors auto-strip when piped.
 
-## Claude Code and Codex: CLI first
+## Claude Code, Codex, Cursor: CLI first
 
-Claude Code and Codex agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
+Coding agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
 
-For Claude Code, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
+For **Claude Code**, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
 
 ```bash
 npx -y @invariance/dna install claude
 ```
 
-For Codex CLI, the installer writes `AGENTS.md` instructions, registers `dna serve` as an MCP server, and configures a `notify` hook that distills each turn:
+For **Codex CLI**, the installer writes `AGENTS.md` instructions, registers `dna serve` as an MCP server, and configures a `notify` hook that distills each turn:
 
 ```bash
 npx -y @invariance/dna install codex
+```
+
+For **Cursor**, the installer writes a `.cursor/rules/dna.mdc` always-attached rule and registers `dna serve` in `.cursor/mcp.json`:
+
+```bash
+npx -y @invariance/dna install cursor
 ```
 
 For any other shell-based agent, add this to the repo instructions:
@@ -189,7 +229,7 @@ Notes "deflate" over time — recurring ones get promoted to invariants, and dna
 | Cursor index | Embedded chunks | ❌ | ❌ | Closed |
 | Semgrep / CodeQL | Pattern findings | ❌ | Pattern-based (security) | Mixed |
 
-See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey, and [docs/simulated-benchmark.md](docs/simulated-benchmark.md) for first-cut benchmark estimates (~82% fewer exploration tokens, ~53% fewer regressions vs grep-only across 30 simulated tasks).
+See [docs/competitive-landscape.md](docs/competitive-landscape.md) for the full survey. Measured quality results live in [`bench/dogfood/2026-05-12-invariance-platform.md`](bench/dogfood/2026-05-12-invariance-platform.md); [`docs/simulated-benchmark.md`](docs/simulated-benchmark.md) contains earlier pre-dogfood simulated estimates and is now superseded.
 
 ## Native-agent prompt commands
 
@@ -214,7 +254,7 @@ API execution is an explicit opt-in for automation: pass `--call-api` plus `ANTH
 
 ## Status
 
-v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python; tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.
+v0.2 (alpha). Working CLI + MCP. Ships structural context plus tests, provenance, invariants, notes, and decisions. The current index is a scoped symbol graph with stable symbol IDs, qualified names, file-aware call edges, and test-file tracking. It still uses a zero-native-deps regex parser for TS/JS/Python (see [What dna is not (yet)](#what-dna-is-not-yet)); tree-sitter WASM and LSP-backed reference resolution are the next accuracy step. Single-file JSON index — SQLite when repos push past ~500k LOC.
 
 v0.3 roadmap: passive metadata observer (`dna observe` — symbol query frequencies only, never conversation content) + `dna suggest` for the invariant authoring queue + LLM-assisted postmortem promotion.
 

@@ -498,7 +498,14 @@ export const PrepareEditInput = z.object({
   ),
 });
 export type PrepareEditInput = z.infer<typeof PrepareEditInput>;
+
+/**
+ * Versioned result so downstream tooling (CI, IDE plugins) can pin against a
+ * known shape. Bump the literal when the result fields change.
+ */
+export const PREPARE_EDIT_SCHEMA_VERSION = 1 as const;
 export const PrepareEditResult = z.object({
+  schema_version: z.literal(PREPARE_EDIT_SCHEMA_VERSION).default(PREPARE_EDIT_SCHEMA_VERSION),
   markdown: z.string(),
   invariants_to_respect: z.array(Invariant),
   notes: z.array(Note).default([]),
@@ -572,6 +579,279 @@ export const SeedResult = z.object({
 });
 export type SeedResult = z.infer<typeof SeedResult>;
 
+/* ---------- v0.7: governance + memory MCP surface ---------- */
+
+export const GateCheckInput = z.object({
+  base: z.string().optional().describe("Git base ref to diff against (default: HEAD)."),
+  files: z.array(z.string()).optional().describe("Override the changed-file set (e.g. when no git diff exists)."),
+});
+export type GateCheckInput = z.infer<typeof GateCheckInput>;
+
+export const GateHitOut = z.object({
+  invariant: Invariant,
+  symbols: z.array(z.string()),
+  files: z.array(z.string()),
+  waived: z.boolean(),
+});
+export const GateCheckResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  hits: z.array(GateHitOut),
+  blocking: z.array(GateHitOut),
+});
+export type GateCheckResult = z.infer<typeof GateCheckResult>;
+
+export const AuditSessionInput = z.object({});
+export type AuditSessionInput = z.infer<typeof AuditSessionInput>;
+export const AuditCheckOut = z.object({
+  id: z.string(),
+  pass: z.boolean(),
+  detail: z.string(),
+});
+export const AuditSessionResult = z.object({
+  session: z.string().optional(),
+  events: z.number().int().nonnegative(),
+  checks: z.array(AuditCheckOut),
+});
+export type AuditSessionResult = z.infer<typeof AuditSessionResult>;
+
+export const FeatureHealthInput = z.object({
+  feature: z.string().optional().describe("Feature label. Omit for all features."),
+});
+export type FeatureHealthInput = z.infer<typeof FeatureHealthInput>;
+export const FeatureHealthOut = z.object({
+  feature: z.string(),
+  symbols: z.number().int().nonnegative(),
+  invariants: z.number().int().nonnegative(),
+  notes: z.number().int().nonnegative(),
+  notes_stale: z.number().int().nonnegative(),
+  decisions: z.number().int().nonnegative(),
+  open_questions: z.number().int().nonnegative(),
+  open_questions_old: z.number().int().nonnegative(),
+  assumptions: z.number().int().nonnegative(),
+  unverified_assumptions: z.number().int().nonnegative(),
+  conflicts: z.number().int().nonnegative(),
+  score: z.number(),
+  last_active: z.string(),
+});
+export const FeatureHealthResult = z.object({
+  features: z.array(FeatureHealthOut),
+});
+export type FeatureHealthResult = z.infer<typeof FeatureHealthResult>;
+
+export const FindConflictsInput = z.object({ symbol: z.string() });
+export type FindConflictsInput = z.infer<typeof FindConflictsInput>;
+export const ConflictOut = z.object({
+  kind: z.enum(["contradicts", "supersedes", "stale"]),
+  symbol: z.string(),
+  lhs: z.object({
+    type: z.enum(["invariant", "decision", "note"]),
+    id: z.string(),
+    text: z.string(),
+    at: z.string().optional(),
+  }),
+  rhs: z.object({
+    type: z.enum(["invariant", "decision", "note"]),
+    id: z.string(),
+    text: z.string(),
+    at: z.string().optional(),
+  }),
+  summary: z.string(),
+});
+export const FindConflictsResult = z.object({
+  symbol: z.string(),
+  conflicts: z.array(ConflictOut),
+});
+export type FindConflictsResult = z.infer<typeof FindConflictsResult>;
+
+export const FindStaleInput = z.object({
+  days: z.number().int().min(1).default(90),
+  feature: z.string().optional(),
+});
+export type FindStaleInput = z.infer<typeof FindStaleInput>;
+export const StaleEntryOut = z.object({
+  kind: z.enum(["note", "decision", "question"]),
+  symbol: z.string(),
+  age_days: z.number().int().nonnegative(),
+  file: z.string().optional(),
+  file_changed_since: z.boolean(),
+  text: z.string(),
+});
+export const FindStaleResult = z.object({
+  entries: z.array(StaleEntryOut),
+});
+export type FindStaleResult = z.infer<typeof FindStaleResult>;
+
+export const RecordQuestionInput = z.object({
+  symbol: z.string(),
+  question: z.string(),
+  asked_by: z.string().optional(),
+  session: z.string().optional(),
+});
+export type RecordQuestionInput = z.infer<typeof RecordQuestionInput>;
+export const RecordQuestionResult = z.object({
+  question: Question,
+  file: z.string(),
+});
+export type RecordQuestionResult = z.infer<typeof RecordQuestionResult>;
+
+export const QuestionsForInput = z.object({
+  symbol: z.string().optional(),
+  status: QuestionStatus.optional(),
+});
+export type QuestionsForInput = z.infer<typeof QuestionsForInput>;
+export const QuestionsForResult = z.object({
+  questions: z.array(Question),
+});
+export type QuestionsForResult = z.infer<typeof QuestionsForResult>;
+
+export const ResolveQuestionInput = z.object({
+  symbol: z.string(),
+  id: z.string(),
+  status: QuestionStatus,
+  resolution: z.string().optional(),
+});
+export type ResolveQuestionInput = z.infer<typeof ResolveQuestionInput>;
+export const ResolveQuestionResult = z.object({
+  question: Question.optional(),
+});
+export type ResolveQuestionResult = z.infer<typeof ResolveQuestionResult>;
+
+export const RecordAssumptionInput = z.object({
+  symbol: z.string(),
+  statement: z.string(),
+  confidence: AssumptionConfidence.optional(),
+  evidence: z.string().optional(),
+  source: AssumptionSource.optional(),
+});
+export type RecordAssumptionInput = z.infer<typeof RecordAssumptionInput>;
+export const RecordAssumptionResult = z.object({
+  assumption: Assumption,
+  file: z.string(),
+});
+export type RecordAssumptionResult = z.infer<typeof RecordAssumptionResult>;
+
+export const AssumptionsForInput = z.object({ symbol: z.string() });
+export type AssumptionsForInput = z.infer<typeof AssumptionsForInput>;
+export const AssumptionsForResult = z.object({
+  symbol: z.string(),
+  assumptions: z.array(Assumption),
+});
+export type AssumptionsForResult = z.infer<typeof AssumptionsForResult>;
+
+export const ContributorsForInput = z.object({ symbol: z.string() });
+export type ContributorsForInput = z.infer<typeof ContributorsForInput>;
+export const ContributorOut = z.object({
+  name: z.string(),
+  score: z.number(),
+  commits: z.number().int().nonnegative(),
+  decisions: z.number().int().nonnegative(),
+});
+export const ContributorsForResult = z.object({
+  symbol: z.string(),
+  contributors: z.array(ContributorOut),
+});
+export type ContributorsForResult = z.infer<typeof ContributorsForResult>;
+
+export const RecordPreferenceInput = z.object({
+  text: z.string(),
+  scope: PreferenceScope.optional(),
+  topic: z.string().optional(),
+  evidence: z.string().optional(),
+});
+export type RecordPreferenceInput = z.infer<typeof RecordPreferenceInput>;
+export const RecordPreferenceResult = z.object({
+  preference: Preference,
+  file: z.string(),
+  deduped: z.boolean(),
+});
+export type RecordPreferenceResult = z.infer<typeof RecordPreferenceResult>;
+
+export const PreferencesListInput = z.object({});
+export type PreferencesListInput = z.infer<typeof PreferencesListInput>;
+export const PreferencesListResult = z.object({
+  preferences: z.array(Preference),
+});
+export type PreferencesListResult = z.infer<typeof PreferencesListResult>;
+
+export const BuildContractInput = z.object({
+  symbol: z.string(),
+  intent: z.string().optional(),
+  save: z.boolean().default(true).describe("Persist to .dna/contract.json for later verify_contract."),
+});
+export type BuildContractInput = z.infer<typeof BuildContractInput>;
+export const EditContractOut = z.object({
+  symbol: z.string(),
+  intent: z.string(),
+  created_at: z.string(),
+  allowed_files: z.array(z.string()),
+  allowed_symbols: z.array(z.string()),
+  invariants: z.array(Invariant),
+  required_tests: z.array(z.string()),
+  risky_callers: z.array(z.string()),
+  blockers: z.array(z.string()),
+});
+export const BuildContractResult = z.object({
+  contract: EditContractOut,
+  saved: z.boolean(),
+});
+export type BuildContractResult = z.infer<typeof BuildContractResult>;
+
+export const VerifyContractInput = z.object({
+  base: z.string().default("HEAD"),
+});
+export type VerifyContractInput = z.infer<typeof VerifyContractInput>;
+export const ContractViolationOut = z.object({
+  type: z.enum(["out-of-scope-file", "out-of-scope-symbol", "blocker-untouched"]),
+  detail: z.string(),
+});
+export const VerifyContractResult = z.object({
+  contract: EditContractOut.optional(),
+  diff_files: z.array(z.string()).default([]),
+  diff_symbols: z.array(z.string()).default([]),
+  violations: z.array(ContractViolationOut).default([]),
+});
+export type VerifyContractResult = z.infer<typeof VerifyContractResult>;
+
+export const CheckProposalInput = z.object({
+  symbol: z.string().optional(),
+  proposal: z.string(),
+  threshold: z.number().min(0).max(1).default(0.25),
+  limit: z.number().int().min(1).max(50).default(5),
+});
+export type CheckProposalInput = z.infer<typeof CheckProposalInput>;
+export const RejectedConflictOut = z.object({
+  symbol: z.string(),
+  proposed: z.string(),
+  rejected_alternative: z.string(),
+  prior_decision: z.string(),
+  rationale: z.string().optional(),
+  recorded_at: z.string(),
+  similarity: z.number(),
+});
+export const CheckProposalResult = z.object({
+  matches: z.array(RejectedConflictOut),
+});
+export type CheckProposalResult = z.infer<typeof CheckProposalResult>;
+
+export const PromotionCandidatesInput = z.object({
+  symbol: z.string(),
+  min_occurrences: z.number().int().min(2).default(3),
+  threshold: z.number().min(0).max(1).default(0.4),
+});
+export type PromotionCandidatesInput = z.infer<typeof PromotionCandidatesInput>;
+export const PromotionCandidateOut = z.object({
+  symbol: z.string(),
+  representative_lesson: z.string(),
+  notes: z.array(Note),
+  severity_hint: z.enum(["info", "warn", "block"]),
+});
+export const PromotionCandidatesResult = z.object({
+  candidates: z.array(PromotionCandidateOut),
+});
+export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
+
 /**
  * Tool catalogue — referenced by CLI command registration and MCP server
  * registration so the surfaces cannot drift.
@@ -584,27 +864,32 @@ export const TOOLS = {
     output: PrepareEditResult,
   },
   get_context: {
-    description: "Full multi-strand context for a symbol.",
+    description:
+      "Multi-strand context (structure, tests, provenance, invariants) for a symbol. Call this when you need depth on a single symbol but don't yet know what you'll change — use prepare_edit instead when you have an intent in mind. Returns concrete file:line citations; prefer this over Glob/Read/Grep exploration for any indexed symbol.",
     input: GetContextInput,
     output: ContextResult,
   },
   impact_of: {
-    description: "Blast radius (symbols, files, tests) of changing a symbol.",
+    description:
+      "Blast radius of changing a symbol: callers, transitively affected symbols, files, and tests. Call before any refactor that touches a function used elsewhere — saves a manual caller hunt.",
     input: ImpactInput,
     output: ImpactResult,
   },
   tests_for: {
-    description: "Tests that protect a symbol — what to run after editing.",
+    description:
+      "Tests that protect a symbol. Call after an edit to know exactly what to run; framework (vitest/jest/pytest/mocha) is detected automatically.",
     input: TestsForInput,
     output: TestsForResult,
   },
   invariants_for: {
-    description: "Asserted invariants that apply before editing a symbol.",
+    description:
+      "Asserted invariants that apply to a symbol. Call before editing — invariants with severity=block must be respected. Authored by the team in .dna/invariants.yml.",
     input: InvariantsForInput,
     output: InvariantsForResult,
   },
   find_reusable: {
-    description: "Search the symbol graph for existing utilities to reuse.",
+    description:
+      "Search the symbol graph for existing helpers before writing new code. Call this whenever you're about to add a utility function — there's usually one already.",
     input: FindReusableInput,
     output: FindReusableResult,
   },
@@ -627,7 +912,8 @@ export const TOOLS = {
     output: RecordDecisionResult,
   },
   decisions_for: {
-    description: "Decisions previously recorded for a symbol.",
+    description:
+      "Choices previously recorded for a symbol — including the rejected alternative and rationale. Call before re-litigating a design choice; if a decision exists, follow it or explicitly supersede it.",
     input: DecisionsForInput,
     output: DecisionsForResult,
   },
@@ -644,7 +930,8 @@ export const TOOLS = {
     output: RecordLessonResult,
   },
   lessons_list: {
-    description: "List recorded lessons across scopes. Filter by scope or target.",
+    description:
+      "List recorded lessons across scopes (global, file, feature, symbol). Filter by scope or target. Use when you want to audit what dna knows about a topic before adding more.",
     input: LessonsListInput,
     output: LessonsListResult,
   },
@@ -668,6 +955,108 @@ export const TOOLS = {
     description: "Mark a DNA-tracked TODO as resolved by id.",
     input: z.object({ id: z.string() }),
     output: z.object({ resolved: z.boolean() }),
+  },
+  gate_check: {
+    description:
+      "Check whether the current diff (or a specified file set) touches any blocking invariants. Returns all hits with waiver status; `blocking` is the subset that should fail CI. Call this before committing changes that may touch governed code paths.",
+    input: GateCheckInput,
+    output: GateCheckResult,
+  },
+  audit_session: {
+    description:
+      "Run self-audit checks for the active session: did the agent call prepare_edit before editing, were required tests recorded, etc. Use to verify the agent followed the brief before declaring a task done.",
+    input: AuditSessionInput,
+    output: AuditSessionResult,
+  },
+  feature_health: {
+    description:
+      "Knowledge-layer health score for one feature (when `feature` is set) or all features. Aggregates invariants, notes, decisions, open questions, unverified assumptions, and conflicts into a 0..1 score. Use to find the weakest feature in the repo.",
+    input: FeatureHealthInput,
+    output: FeatureHealthResult,
+  },
+  find_conflicts: {
+    description:
+      "Detect contradictions between invariants, decisions, and notes for a symbol — e.g. a decision says $1000 cap but a note says $500. Call before recording a new decision so you don't re-introduce a known conflict.",
+    input: FindConflictsInput,
+    output: FindConflictsResult,
+  },
+  find_stale: {
+    description:
+      "Notes, decisions, and open questions older than `days` whose underlying file has since been touched — i.e. the code moved but the knowledge didn't. The maintenance queue.",
+    input: FindStaleInput,
+    output: FindStaleResult,
+  },
+  record_question: {
+    description:
+      "Persist an open question against a symbol. Use when the agent encounters ambiguity it cannot resolve from context alone — the question goes to a human review queue (see questions_for).",
+    input: RecordQuestionInput,
+    output: RecordQuestionResult,
+  },
+  questions_for: {
+    description:
+      "List recorded open questions, optionally filtered by symbol and/or status. Call before asking a human — if the same question is already open, link to it rather than duplicate.",
+    input: QuestionsForInput,
+    output: QuestionsForResult,
+  },
+  resolve_question: {
+    description:
+      "Resolve (or mark wontfix) a previously recorded question by id. Pass a resolution string to record the answer for future agents.",
+    input: ResolveQuestionInput,
+    output: ResolveQuestionResult,
+  },
+  record_assumption: {
+    description:
+      "Persist an assumption made about a symbol (e.g. 'inputs are pre-validated'). Future edits get a chance to verify or invalidate it. Use when behavior depends on unstated contracts.",
+    input: RecordAssumptionInput,
+    output: RecordAssumptionResult,
+  },
+  assumptions_for: {
+    description:
+      "List assumptions recorded for a symbol with their verification status. Call before relying on implicit behavior — unverified assumptions are common bug sources.",
+    input: AssumptionsForInput,
+    output: AssumptionsForResult,
+  },
+  contributors_for: {
+    description:
+      "Rank contributors by accumulated context for a symbol (commit share + recorded decisions). Use to find a human reviewer for a non-trivial change.",
+    input: ContributorsForInput,
+    output: ContributorsForResult,
+  },
+  record_preference: {
+    description:
+      "Persist a coding preference (e.g. 'prefer named imports', 'no console.log in committed code'). Preferences surface in prepare_edit briefs and influence agent suggestions.",
+    input: RecordPreferenceInput,
+    output: RecordPreferenceResult,
+  },
+  preferences_list: {
+    description:
+      "List recorded preferences across scopes (repo, user, global).",
+    input: PreferencesListInput,
+    output: PreferencesListResult,
+  },
+  build_contract: {
+    description:
+      "Build a strict edit contract for a symbol: which files/symbols may be touched, which tests must run, which invariants block, which callers are risky. Persisted by default so verify_contract can check the working diff against it.",
+    input: BuildContractInput,
+    output: BuildContractResult,
+  },
+  verify_contract: {
+    description:
+      "Check the working git diff (vs `base`) against the last saved edit contract. Returns violations (out-of-scope files/symbols, untouched blockers). Call before declaring an edit task complete.",
+    input: VerifyContractInput,
+    output: VerifyContractResult,
+  },
+  check_proposal: {
+    description:
+      "Search prior decisions for rejected_alternatives that overlap with a proposed approach — surfaces 'we already decided against this' before the agent re-proposes a known bad path.",
+    input: CheckProposalInput,
+    output: CheckProposalResult,
+  },
+  promotion_candidates: {
+    description:
+      "Rule-based clustering of un-promoted notes on a symbol; clusters with ≥ min_occurrences and overlap ≥ threshold are candidates for promotion to invariants. Use as the authoring queue for the team's rules layer.",
+    input: PromotionCandidatesInput,
+    output: PromotionCandidatesResult,
   },
 } as const;
 

@@ -3,71 +3,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import kleur from "kleur";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
-
-const AGENT_INSTRUCTIONS = `<!-- dna:start -->
-## dna
-
-\`dna\` is local repo memory: symbol graph, tests, invariants, lessons, decisions, and personal preferences. Hooks auto-fire dna on session start, on prompts, before/after edits, and on failures — you usually don't need to call dna by hand. Useful manual calls:
-
-\`\`\`bash
-dna find "<keyword>"               # locate existing helpers before writing new ones
-dna context <symbol> --markdown    # plan a multi-file change
-dna decisions <symbol>             # check prior choices before re-litigating
-dna preferences                    # see the user's captured standing rules
-dna prepare <symbol> --intent "…"  # decision-ready brief if the auto-context wasn't enough
-\`\`\`
-
-When the user gives a durable instruction ("from now on…", "always…", "i prefer…", "don't ever…"), the capture-preference hook records it automatically. Treat \`dna preferences\` output as soft constraints in every session.
-
-When you learn something the next agent should know, persist it:
-\`\`\`bash
-dna lessons record "<one sentence>"          # auto-classified: global → CLAUDE.md; scoped → notes
-dna lessons record "<…>" --hint-scope global # bias the classifier when it's wrong
-dna lessons reclassify <id> --to <scope>     # move a lesson between tiers
-dna learn <symbol> --lesson "<…>"            # legacy: always symbol-scoped
-dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
-\`\`\`
-
-\`dna lessons record\` returns the chosen scope and signals; if the scope looks wrong (e.g. it picked \`symbol\` for something repo-wide), call \`dna lessons reclassify <id> --to global\` to fix it. Global lessons land in the \`<!-- dna:global-lessons -->\` block of CLAUDE.md and are always loaded; scoped lessons live in \`.dna/notes/{symbol,file,feature}/\` and are auto-pulled when the prompt mentions the matching target.
-
-**Tag the session early.** When you understand what the user is working on (e.g. "the homepage", "the auth flow"), call \`dna feature use <short-kebab-label>\` once. Use the exact label if the user names a known feature; otherwise pick a short kebab-case label. dna then learns which symbols belong to that feature and surfaces them automatically on future sessions that mention the same label.
-<!-- dna:end -->
-`;
-
-const DNA_SKILL = `---
-name: dna
-description: Use the dna CLI to fetch repo context, impact, tests, invariants, notes, and decisions before editing code.
----
-
-# dna
-
-Use \`dna\` as a shell-first repo context tool. Prefer the CLI surface.
-
-Before editing a non-trivial symbol, run:
-
-\`\`\`bash
-dna prepare <symbol> --intent "<short intent>"
-\`\`\`
-
-Respect invariants marked \`block\`. Run tests listed by the prepare output or by:
-
-\`\`\`bash
-dna tests <symbol> --json
-\`\`\`
-
-Before creating a new helper, search for reusable code:
-
-\`\`\`bash
-dna find "<keyword>" --json
-\`\`\`
-
-After a successful edit, persist durable lessons:
-
-\`\`\`bash
-dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
-dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
-\`\`\`
-`;
+import { AGENT_INSTRUCTIONS, CLAUDE_SKILL, CURSOR_RULE } from "../install/skill-content.js";
 
 interface InstallOpts extends RootOption {
   force?: boolean;
@@ -78,6 +14,12 @@ interface InstallOpts extends RootOption {
 interface CodexInstallOpts extends RootOption {
   force?: boolean;
   skipAgentsMd?: boolean;
+  useGlobal?: boolean;
+}
+
+interface CursorInstallOpts extends RootOption {
+  force?: boolean;
+  skipMcp?: boolean;
   useGlobal?: boolean;
 }
 
@@ -128,6 +70,26 @@ export function registerInstall(program: Command): void {
     console.log(kleur.dim(`Notify hook + MCP server use: ${dnaCmd(!!opts.useGlobal)}`));
     console.log(kleur.dim("Codex CLI has no PreToolUse hook; AGENTS.md teaches it to run `dna prepare` like `rg`."));
   });
+
+  addRootOption(
+    install
+      .command("cursor")
+      .description("Install Cursor integration: .cursor/rules/dna.mdc + .cursor/mcp.json")
+      .option("--force", "Overwrite existing dna-managed Cursor files")
+      .option("--skip-mcp", "Do not write .cursor/mcp.json (rule file only)")
+      .option("--use-global", "Configure MCP to call `dna` directly (requires global install)"),
+  ).action(async (opts: CursorInstallOpts) => {
+    const root = resolveRoot(opts);
+    await runInstallCursor(root, {
+      force: !!opts.force,
+      skipMcp: !!opts.skipMcp,
+      useGlobal: !!opts.useGlobal,
+    });
+    console.log("");
+    console.log(kleur.green("installed") + " Cursor dna integration");
+    console.log(kleur.dim(`MCP server uses: ${dnaCmd(!!opts.useGlobal)}`));
+    console.log(kleur.dim("Cursor has no shell hooks; .cursor/rules/dna.mdc teaches the agent to run `dna prepare` before edits."));
+  });
 }
 
 export interface RunInstallClaudeOpts {
@@ -139,7 +101,7 @@ export interface RunInstallClaudeOpts {
 export async function runInstallClaude(root: string, opts: RunInstallClaudeOpts): Promise<void> {
   const cmd = dnaCmd(!!opts.useGlobal);
   const writes: Array<[string, string]> = [
-    [path.join(root, ".claude/skills/dna/SKILL.md"), DNA_SKILL],
+    [path.join(root, ".claude/skills/dna/SKILL.md"), CLAUDE_SKILL],
     [
       path.join(root, ".claude/settings.json"),
       JSON.stringify(claudeSettings(cmd), null, 2) + "\n",
@@ -148,6 +110,7 @@ export async function runInstallClaude(root: string, opts: RunInstallClaudeOpts)
   for (const [file, content] of writes) {
     await writeManagedFile(root, file, content, opts.force);
   }
+  await upsertClaudeMcp(root, !!opts.useGlobal);
   if (!opts.skipClaudeMd) await upsertAgentMd(root, "CLAUDE.md");
 }
 
@@ -161,6 +124,22 @@ export async function runInstallCodex(root: string, opts: RunInstallCodexOpts): 
   const cmd = dnaCmd(!!opts.useGlobal);
   if (!opts.skipAgentsMd) await upsertAgentMd(root, "AGENTS.md");
   await upsertCodexConfig(root, cmd, !!opts.useGlobal);
+}
+
+export interface RunInstallCursorOpts {
+  force: boolean;
+  skipMcp: boolean;
+  useGlobal?: boolean;
+}
+
+export async function runInstallCursor(root: string, opts: RunInstallCursorOpts): Promise<void> {
+  await writeManagedFile(
+    root,
+    path.join(root, ".cursor/rules/dna.mdc"),
+    CURSOR_RULE,
+    opts.force,
+  );
+  if (!opts.skipMcp) await upsertCursorMcp(root, !!opts.useGlobal);
 }
 
 async function writeManagedFile(
@@ -324,5 +303,57 @@ async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean):
     ? existing.replace(/# dna:start[\s\S]*?# dna:end\n?/m, block)
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${block}`;
   await writeFile(file, next);
+  console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
+}
+
+/**
+ * Merge a `dna` entry into `.mcp.json` at the repo root. Claude Code reads
+ * this file at session start; we own only the `mcpServers.dna` key and leave
+ * the rest of the JSON intact so users can mix in other MCP servers.
+ *
+ * This is what makes the SKILL.md `prepare_edit` advice actually callable —
+ * without `.mcp.json`, the MCP tools are not exposed to the Claude agent.
+ */
+async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> {
+  const file = path.join(root, ".mcp.json");
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(file, "utf8");
+    existing = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // create below
+  }
+  const servers =
+    (existing.mcpServers as Record<string, unknown> | undefined) ?? {};
+  servers.dna = useGlobal
+    ? { command: "dna", args: ["serve"] }
+    : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
+  const next = { ...existing, mcpServers: servers };
+  await writeFile(file, JSON.stringify(next, null, 2) + "\n");
+  console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
+}
+
+/**
+ * Merge a `dna` entry into `.cursor/mcp.json`. Cursor reads this file at
+ * session start; we own only the `mcpServers.dna` key and leave the rest
+ * of the JSON intact so users can mix in other MCP servers.
+ */
+async function upsertCursorMcp(root: string, useGlobal: boolean): Promise<void> {
+  const file = path.join(root, ".cursor/mcp.json");
+  await mkdir(path.dirname(file), { recursive: true });
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(file, "utf8");
+    existing = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // create below
+  }
+  const servers =
+    (existing.mcpServers as Record<string, unknown> | undefined) ?? {};
+  servers.dna = useGlobal
+    ? { command: "dna", args: ["serve"] }
+    : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
+  const next = { ...existing, mcpServers: servers };
+  await writeFile(file, JSON.stringify(next, null, 2) + "\n");
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }

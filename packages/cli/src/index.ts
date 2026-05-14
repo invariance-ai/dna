@@ -4,6 +4,7 @@ import { registerContext } from "./commands/context.js";
 import { registerImpact } from "./commands/impact.js";
 import { registerTests } from "./commands/tests.js";
 import { registerInvariants } from "./commands/invariants.js";
+import { registerInvariant } from "./commands/invariant.js";
 import { registerInit } from "./commands/init.js";
 import { registerIndex } from "./commands/index.js";
 import { registerFind } from "./commands/find.js";
@@ -55,12 +56,69 @@ import { registerSeed } from "./commands/seed.js";
 import { registerVerify } from "./commands/verify.js";
 import { registerSync } from "./commands/sync.js";
 
-const program = new Command()
-  .name("dna")
-  .description("Codebase context for coding agents.")
-  .version("0.1.0");
+export function buildProgram(): Command {
+  const program = new Command()
+    .name("dna")
+    .description("Codebase context for coding agents.")
+    .version("0.1.0");
 
-registerInit(program);
+  program.addHelpText(
+    "beforeAll",
+    [
+      "Core 5 (the happy path):",
+      "  dna init                              write .dna/config.yml + invariants.yml",
+      "  dna install <claude|codex|cursor>     wire agent hooks + CLAUDE.md / AGENTS.md / .cursor/",
+      "  dna index                             build the symbol graph",
+      "  dna prepare <symbol> --intent <...>   decision-ready brief before edits",
+      "  dna learn <symbol> --lesson <...>     record what an edit taught you",
+      "",
+      "Other essentials: dna doctor (health check), dna find, dna context, dna impact, dna tests.",
+      "Full surface (40+ commands) is available — see https://github.com/invariance-ai/dna#cli.",
+      "",
+    ].join("\n"),
+  );
+
+  registerAll(program);
+
+  // Curate `dna --help`: only README-documented commands are visible by default.
+  // The full surface still runs and is reachable via `dna <name> --help`.
+  const PRIMARY = new Set([
+    "init",
+    "install",
+    "index",
+    "prepare",
+    "context",
+    "find",
+    "trace",
+    "impact",
+    "tests",
+    "invariants",
+    "invariant",
+    "learn",
+    "notes",
+    "learn-todos",
+    "decide",
+    "decisions",
+    "serve",
+    "suggest",
+    "doctor",
+    "pulse",
+    "seed",
+    "verify",
+    "sync",
+  ]);
+  for (const cmd of program.commands) {
+    if (!PRIMARY.has(cmd.name())) {
+      (cmd as unknown as { _hidden: boolean })._hidden = true;
+    }
+  }
+  program.showHelpAfterError("(use `dna --help` to see available commands)");
+
+  return program;
+}
+
+function registerAll(program: Command): void {
+  registerInit(program);
 registerWizard(program);
 registerInstall(program);
 registerPrefer(program);
@@ -83,6 +141,7 @@ registerPrIntent(program);
 registerImpact(program);
 registerTests(program);
 registerInvariants(program);
+registerInvariant(program);
 registerFind(program);
 registerTrace(program);
 registerServe(program);
@@ -107,68 +166,45 @@ registerTestRecord(program);
 registerRuntime(program);
 registerAudit(program);
 registerReviewMemory(program);
-registerVerifyContract(program);
-registerCheckProposal(program);
-registerDoctor(program);
-registerPulse(program);
-registerSeed(program);
-registerVerify(program);
-registerSync(program);
-
-// Curate `dna --help`: only README-documented commands are visible by default.
-// Experimental/internal commands stay registered (and still run) but are hidden
-// from the help listing to keep first-run discoverability tight.
-// Surface the full list with `dna --help-all` (commander prints hidden commands then).
-const PRIMARY = new Set([
-  "init",
-  "install",
-  "index",
-  "prepare",
-  "context",
-  "find",
-  "trace",
-  "impact",
-  "tests",
-  "invariants",
-  "learn",
-  "notes",
-  "learn-todos",
-  "decide",
-  "decisions",
-  "serve",
-  "suggest",
-  "doctor",
-  "pulse",
-  "seed",
-  "verify",
-  "sync",
-]);
-for (const cmd of program.commands) {
-  if (!PRIMARY.has(cmd.name())) {
-    (cmd as unknown as { _hidden: boolean })._hidden = true;
-  }
+  registerVerifyContract(program);
+  registerCheckProposal(program);
+  registerDoctor(program);
+  registerPulse(program);
+  registerSeed(program);
+  registerVerify(program);
+  registerSync(program);
 }
-program.showHelpAfterError("(use `dna --help` to see available commands)");
 
-program.parseAsync(process.argv).catch((err) => {
-  const msg = (err && err.message) || String(err);
-  // Translate the most common first-run failure: command that needs the index
-  // before `dna index` has run. ENOENT on .dna/index/symbols.json bubbles up
-  // from readIndex(); the raw stack is not actionable.
-  if (
-    err &&
-    (err.code === "ENOENT" || /ENOENT/.test(msg)) &&
-    /\.dna\/(index\/symbols\.json|config\.yml)/.test(msg)
-  ) {
-    const isConfig = /config\.yml/.test(msg);
-    console.error(
-      isConfig
-        ? "dna is not initialized in this directory. Run `dna init` first."
-        : "No symbol index found. Run `dna index` first (or `dna init` if this is a new repo).",
-    );
-    console.error("Run `dna doctor` to see what else is missing.");
-    process.exit(1);
+const isMain = (() => {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return false;
+    const url = new URL(`file://${entry}`).href;
+    return import.meta.url === url;
+  } catch {
+    return false;
   }
-  console.error(msg);
-  process.exit(1);
-});
+})();
+
+if (isMain) {
+  buildProgram()
+    .parseAsync(process.argv)
+    .catch((err: Error & { code?: string }) => {
+      const msg = err.message ?? String(err);
+      if (
+        (err.code === "ENOENT" || /ENOENT/.test(msg)) &&
+        /\.dna\/(index\/symbols\.json|config\.yml)/.test(msg)
+      ) {
+        const isConfig = /config\.yml/.test(msg);
+        console.error(
+          isConfig
+            ? "dna is not initialized in this directory. Run `dna init` first."
+            : "No symbol index found. Run `dna index` first (or `dna init` if this is a new repo).",
+        );
+        console.error("Run `dna doctor` to see what else is missing.");
+        process.exit(1);
+      }
+      console.error(msg);
+      process.exit(1);
+    });
+}
