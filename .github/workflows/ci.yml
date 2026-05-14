@@ -62,6 +62,7 @@ jobs:
           echo "export function hello() { return 'hi'; }" > hello.ts
           git add . && git -c user.email=ci@x -c user.name=ci commit -q -m init
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" init
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" install claude
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" index
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" doctor
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" find hello
