@@ -75,7 +75,19 @@ export type TestRef = z.infer<typeof TestRef>;
 export const NoteSeverity = z.enum(["low", "medium", "high"]);
 export type NoteSeverity = z.infer<typeof NoteSeverity>;
 
-export const NoteSource = z.enum(["agent", "human", "doc", "git", "promoted", "todo"]);
+export const NoteSource = z.enum([
+  "agent",
+  "human",
+  "doc",
+  "git",
+  "promoted",
+  "todo",
+  "pr",
+  "incident",
+  "transcript",
+  "seed",
+  "pulse",
+]);
 export type NoteSource = z.infer<typeof NoteSource>;
 
 /**
@@ -108,6 +120,15 @@ export const Note = z.object({
   /** Concrete target for the scope: symbol name, file path, or feature label. */
   applies_to: z.string().optional(),
   classifier: ClassifierMeta.optional(),
+  /** Provenance: link to a PR#, commit SHA, file:line, transcript ID, or URL. */
+  evidence_link: z.string().optional(),
+  /** Derived confidence in this note (0..1). 1.0 = human-verified; lower = LLM-distilled. */
+  confidence: z.number().min(0).max(1).optional(),
+  /** Identity of human who reviewed this note (email or git username). */
+  verified_by: z.string().optional(),
+  verified_at: z.string().optional(),
+  /** Author identity recorded at write time (git user.email when available). */
+  author: z.string().optional(),
 });
 export type Note = z.infer<typeof Note>;
 
@@ -115,6 +136,16 @@ export type Note = z.infer<typeof Note>;
  * Schema-only in v0.2. CLI lands in v0.4 (`dna attach --session`). Defined
  * now so data collected via future channels does not need migration.
  */
+export const DecisionSource = z.enum([
+  "human",
+  "agent",
+  "transcript",
+  "pr",
+  "seed",
+  "promoted",
+]);
+export type DecisionSource = z.infer<typeof DecisionSource>;
+
 export const Decision = z.object({
   symbol: z.string(),
   decision: z.string(),
@@ -123,6 +154,13 @@ export const Decision = z.object({
   made_by: z.string().optional(),
   session: z.string().optional(),
   recorded_at: z.string(),
+  /** Stable id so the decision can be reclassified / verified by id. */
+  id: z.string().optional(),
+  source: DecisionSource.default("human"),
+  evidence_link: z.string().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  verified_by: z.string().optional(),
+  verified_at: z.string().optional(),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -222,14 +260,31 @@ export type FeaturesFile = z.infer<typeof FeaturesFile>;
 export const Strand = z.enum(["structural", "tests", "provenance", "invariants"]);
 export type Strand = z.infer<typeof Strand>;
 
+export const ContextMode = z.enum(["brief", "full"]);
+export type ContextMode = z.infer<typeof ContextMode>;
+
 export const GetContextInput = z.object({
   symbol: z.string(),
   depth: z.number().int().min(1).max(5).default(2),
   strands: z.array(Strand).default(["structural", "tests", "provenance", "invariants"]),
   since: z.string().optional(),
   authored_by: z.string().optional(),
+  mode: ContextMode.optional(),
+  budget: z.number().int().nonnegative().optional(),
 });
 export type GetContextInput = z.infer<typeof GetContextInput>;
+
+export const TodoItem = z.object({
+  id: z.string(),
+  file: z.string(),
+  line: z.number().int().nonnegative().optional(),
+  symbol: z.string().optional(),
+  text: z.string(),
+  source: z.enum(["failure", "note", "manual"]),
+  created_at: z.string(),
+  resolved_at: z.string().optional(),
+});
+export type TodoItem = z.infer<typeof TodoItem>;
 
 export const ContextResult = z.object({
   symbol: SymbolRef,
@@ -242,6 +297,10 @@ export const ContextResult = z.object({
   decisions: z.array(Decision).default([]),
   preferences: z.array(Preference).default([]),
   risk: z.enum(["low", "medium", "high"]),
+  todos: z.array(TodoItem).default([]),
+  truncated: z
+    .object({ sections: z.array(z.string()), droppedCount: z.number().int().nonnegative() })
+    .optional(),
 });
 export type ContextResult = z.infer<typeof ContextResult>;
 
@@ -456,6 +515,69 @@ export const PrepareEditResult = z.object({
   risk: z.enum(["low", "medium", "high"]),
 });
 export type PrepareEditResult = z.infer<typeof PrepareEditResult>;
+
+/* ---------- Pulse: diff-time risk (v0.7) ---------- */
+
+export const PulseSeverity = z.enum(["info", "low", "medium", "high", "block"]);
+export type PulseSeverity = z.infer<typeof PulseSeverity>;
+
+export const PulseFinding = z.object({
+  kind: z.enum([
+    "invariant_hit",
+    "untested_caller",
+    "note_ignored",
+    "decision_contradicted",
+    "stale_note",
+  ]),
+  severity: PulseSeverity,
+  symbol: z.string().optional(),
+  file: z.string().optional(),
+  message: z.string(),
+  evidence: z.string().optional(),
+});
+export type PulseFinding = z.infer<typeof PulseFinding>;
+
+export const PulseInput = z.object({
+  base: z.string().default("HEAD"),
+  files: z.array(z.string()).optional(),
+  /** Output format: markdown | json | github (PR comment body). */
+  format: z.enum(["markdown", "json", "github"]).default("markdown"),
+});
+export type PulseInput = z.infer<typeof PulseInput>;
+
+export const PulseResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  findings: z.array(PulseFinding),
+  risk_score: z.number().min(0).max(1),
+  risk_band: z.enum(["low", "medium", "high", "block"]),
+  markdown: z.string(),
+});
+export type PulseResult = z.infer<typeof PulseResult>;
+
+/* ---------- Seed: cold-start bootstrap (v0.7) ---------- */
+
+export const SeedProposal = z.object({
+  kind: z.enum(["note", "decision", "invariant"]),
+  symbol: z.string().optional(),
+  applies_to: z.array(z.string()).default([]),
+  text: z.string(),
+  evidence_link: z.string().optional(),
+  source: z.enum(["pr", "git", "incident", "todo"]),
+  confidence: z.number().min(0).max(1),
+});
+export type SeedProposal = z.infer<typeof SeedProposal>;
+
+export const SeedResult = z.object({
+  proposals: z.array(SeedProposal),
+  scanned: z.object({
+    commits: z.number().int().nonnegative(),
+    prs: z.number().int().nonnegative(),
+    todos: z.number().int().nonnegative(),
+  }),
+});
+export type SeedResult = z.infer<typeof SeedResult>;
 
 /* ---------- v0.7: governance + memory MCP surface ---------- */
 
@@ -818,6 +940,21 @@ export const TOOLS = {
       "Move a lesson between scopes (e.g. promote a scoped note to CLAUDE.md or demote a global lesson to a symbol/file).",
     input: ReclassifyLessonInput,
     output: ReclassifyLessonResult,
+  },
+  list_todos: {
+    description:
+      "List TODOs DNA has captured for a file or symbol. Surfaces unfinished work (failed tests, captured notes) without editing source files.",
+    input: z.object({
+      file: z.string().optional(),
+      symbol: z.string().optional(),
+      include_resolved: z.boolean().optional(),
+    }),
+    output: z.object({ todos: z.array(TodoItem) }),
+  },
+  resolve_todo: {
+    description: "Mark a DNA-tracked TODO as resolved by id.",
+    input: z.object({ id: z.string() }),
+    output: z.object({ resolved: z.boolean() }),
   },
   gate_check: {
     description:

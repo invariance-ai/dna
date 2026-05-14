@@ -51,6 +51,10 @@ import { registerReviewMemory } from "./commands/review-memory.js";
 import { registerVerifyContract } from "./commands/verify-contract.js";
 import { registerCheckProposal } from "./commands/check-proposal.js";
 import { registerDoctor } from "./commands/doctor.js";
+import { registerPulse } from "./commands/pulse.js";
+import { registerSeed } from "./commands/seed.js";
+import { registerVerify } from "./commands/verify.js";
+import { registerSync } from "./commands/sync.js";
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -98,6 +102,10 @@ export function buildProgram(): Command {
     "serve",
     "suggest",
     "doctor",
+    "pulse",
+    "seed",
+    "verify",
+    "sync",
   ]);
   for (const cmd of program.commands) {
     if (!PRIMARY.has(cmd.name())) {
@@ -161,6 +169,10 @@ registerReviewMemory(program);
   registerVerifyContract(program);
   registerCheckProposal(program);
   registerDoctor(program);
+  registerPulse(program);
+  registerSeed(program);
+  registerVerify(program);
+  registerSync(program);
 }
 
 const isMain = (() => {

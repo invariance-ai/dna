@@ -142,6 +142,21 @@ export async function recordFailure(
   if (entry.failures.length > 50) entry.failures = entry.failures.slice(-50);
   store.symbols[target] = entry;
   await writeStore(root, store);
+
+  // Side-effect: drop a TODO into .dna/todos.json so future get_context surfaces
+  // unfinished work. Never edits user source files.
+  const { addTodo } = await import("./todos.js");
+  const text = failure.message
+    ? `${failure.kind}: ${failure.message.slice(0, 160)}`
+    : `${failure.kind} failure`;
+  await addTodo(root, {
+    file: target,
+    symbol: target,
+    text,
+    source: "failure",
+  }).catch(() => {
+    /* best-effort */
+  });
   return target;
 }
 

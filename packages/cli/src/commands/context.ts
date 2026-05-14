@@ -15,6 +15,8 @@ interface ContextOpts extends RootOption {
   since?: string;
   authoredBy?: string;
   feature?: string;
+  mode?: "brief" | "full";
+  budget?: number;
 }
 
 export function registerContext(program: Command): void {
@@ -27,7 +29,9 @@ export function registerContext(program: Command): void {
       .option("--depth <n>", "Caller/callee depth", (v) => parseInt(v, 10), 2)
       .option("--since <when>", "Drop notes/decisions/provenance older than this (ISO or 7d/2w/3mo)")
       .option("--authored-by <name>", "Filter decisions + provenance to one author")
-      .option("--feature <label>", "Aggregate context for a feature instead of a symbol"),
+      .option("--feature <label>", "Aggregate context for a feature instead of a symbol")
+      .option("--mode <mode>", "brief|full payload (default brief)", "brief")
+      .option("--budget <n>", "Token budget (default 1500; 0 = unlimited)", (v) => parseInt(v, 10), 1500),
   ).action(async (symbol: string | undefined, opts: ContextOpts) => {
     const root = resolveRoot(opts);
     try {
@@ -71,6 +75,8 @@ export function registerContext(program: Command): void {
           strands: ["structural", "tests", "provenance", "invariants"],
           since: opts.since,
           authored_by: opts.authoredBy,
+          mode: opts.mode ?? "brief",
+          budget: opts.budget ?? 1500,
         },
         root,
       );

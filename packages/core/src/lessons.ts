@@ -26,6 +26,7 @@ import {
   readGlobalLessons,
   generateLessonId,
 } from "./claude_md.js";
+import { recordLessonObservation, type GateOpts } from "./lesson_pending.js";
 
 /* ----------------------- heuristic scoring ----------------------- */
 
@@ -229,6 +230,15 @@ export interface PersistLessonOpts {
   evidence?: string;
   severity?: NoteSeverity;
   classifier?: ClassifierMeta;
+  /**
+   * Confidence gate override. When `opts.scope === "global"` we route the
+   * write through lesson_pending.recordObservation; only lessons that pass
+   * `confidence >= confidenceGate && count >= countGate` reach CLAUDE.md.
+   * Below-threshold global lessons are downgraded to a file-scoped note
+   * (file = CLAUDE.md) so they remain visible but don't pollute the global
+   * block.
+   */
+  gate?: GateOpts;
 }
 
 export interface PersistLessonResult {
@@ -236,6 +246,8 @@ export interface PersistLessonResult {
   scope: NoteScope;
   target?: string;
   path: string;
+  promoted?: boolean;
+  pending_count?: number;
 }
 
 export async function persistLesson(
@@ -246,13 +258,41 @@ export async function persistLesson(
   const recorded_at = new Date().toISOString().slice(0, 10);
 
   if (opts.scope === "global") {
-    const { path: p } = await upsertGlobalLesson(root, {
+    const confidence = opts.classifier?.confidence ?? 1.0;
+    const { promoted, pending } = await recordLessonObservation(
+      root,
+      opts.lesson,
+      confidence,
+      opts.gate,
+    );
+    if (promoted) {
+      const { path: p } = await upsertGlobalLesson(root, {
+        id,
+        lesson: opts.lesson,
+        severity: opts.severity ?? "medium",
+        recorded_at,
+      });
+      return { id, scope: "global", path: p, promoted: true, pending_count: pending.count };
+    }
+    // Gate failed — stash as a file-scoped note attached to CLAUDE.md so it
+    // surfaces in dna get_context for the root config without writing to
+    // the global block prematurely.
+    const { file } = await appendFileNote(root, {
       id,
+      target: "CLAUDE.md",
       lesson: opts.lesson,
-      severity: opts.severity ?? "medium",
-      recorded_at,
+      evidence: opts.evidence,
+      severity: opts.severity,
+      classifier: opts.classifier,
     });
-    return { id, scope: "global", path: p };
+    return {
+      id,
+      scope: "file",
+      target: "CLAUDE.md",
+      path: file,
+      promoted: false,
+      pending_count: pending.count,
+    };
   }
 
   const target = opts.target;

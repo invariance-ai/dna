@@ -130,9 +130,11 @@ describe("persistLesson + listLessons + reclassifyLesson", () => {
 
   it("global → symbol reclassify removes from CLAUDE.md and writes a note", async () => {
     const root = await tempRepo();
+    // Force promotion via gate override so the test exercises the global path.
     const written = await persistLesson(root, {
       scope: "global",
       lesson: "Prefer composition over inheritance.",
+      gate: { countGate: 1 },
     });
     expect(written.scope).toBe("global");
 
@@ -149,5 +151,41 @@ describe("persistLesson + listLessons + reclassifyLesson", () => {
 
     const lessons = await listLessons(root, { scope: "symbol" });
     expect(lessons.find((l) => l.id === written.id)).toBeTruthy();
+  });
+
+  it("global lesson below confidence gate stays out of CLAUDE.md", async () => {
+    const root = await tempRepo();
+    const first = await persistLesson(root, {
+      scope: "global",
+      lesson: "Prefer terse responses with no trailing summaries.",
+      classifier: { signals: ["heuristic"], confidence: 0.6, used_llm: false },
+    });
+    expect(first.promoted).toBe(false);
+    expect(first.scope).toBe("file");
+
+    const claudeRaw = await readFile(path.join(root, "CLAUDE.md"), "utf8").catch(() => "");
+    expect(claudeRaw).not.toContain(first.id);
+  });
+
+  it("global lesson promotes on second high-confidence observation", async () => {
+    const root = await tempRepo();
+    const text = "Always run pnpm test before pushing.";
+    const first = await persistLesson(root, {
+      scope: "global",
+      lesson: text,
+      classifier: { signals: ["heuristic"], confidence: 0.9, used_llm: false },
+    });
+    expect(first.promoted).toBe(false);
+
+    const second = await persistLesson(root, {
+      scope: "global",
+      lesson: text,
+      classifier: { signals: ["heuristic"], confidence: 0.9, used_llm: false },
+    });
+    expect(second.promoted).toBe(true);
+    expect(second.scope).toBe("global");
+
+    const claudeRaw = await readFile(path.join(root, "CLAUDE.md"), "utf8");
+    expect(claudeRaw).toContain(text);
   });
 });

@@ -11,9 +11,19 @@ import type { SymbolRef } from "@invariance/dna-schemas";
  * decorators-as-factories, and dynamic dispatch. Good enough for v0.1 because
  * downstream consumers (CLI/MCP) can fall back to grep verification.
  */
+export type ParsedLanguage =
+  | "typescript"
+  | "javascript"
+  | "python"
+  | "go"
+  | "rust"
+  | "java"
+  | "ruby"
+  | "csharp";
+
 export interface ParsedFile {
   path: string;
-  language: "typescript" | "javascript" | "python";
+  language: ParsedLanguage;
   symbols: SymbolRef[];
   call_sites: Array<{ callee_name: string; line: number; from: string }>;
 }
@@ -31,6 +41,61 @@ const PY_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
   { kind: "class", re: /^\s*class\s+([A-Za-z_][\w]*)/gm },
 ];
 
+const GO_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "function", re: /^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_][\w]*)\s*\(/gm },
+  { kind: "type", re: /^\s*type\s+([A-Za-z_][\w]*)\s+(?:struct|interface|=)/gm },
+];
+
+const RUST_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "function", re: /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][\w]*)/gm },
+  { kind: "type", re: /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+([A-Za-z_][\w]*)/gm },
+  { kind: "method", re: /^\s+(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][\w]*)/gm },
+];
+
+const JAVA_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "class", re: /^\s*(?:public\s+|private\s+|protected\s+|abstract\s+|final\s+|static\s+)*class\s+([A-Za-z_][\w]*)/gm },
+  { kind: "type", re: /^\s*(?:public\s+|private\s+|protected\s+)*(?:interface|enum|@interface)\s+([A-Za-z_][\w]*)/gm },
+  { kind: "method", re: /^\s+(?:public\s+|private\s+|protected\s+|static\s+|final\s+|synchronized\s+|abstract\s+)+(?:[A-Za-z_<>,\s\[\]?]+\s+)?([A-Za-z_][\w]*)\s*\([^)]*\)\s*(?:throws[^{]+)?\{/gm },
+];
+
+const RUBY_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "function", re: /^\s*def\s+(?:self\.)?([A-Za-z_][\w!?=]*)/gm },
+  { kind: "class", re: /^\s*class\s+([A-Z][\w]*)/gm },
+  { kind: "module", re: /^\s*module\s+([A-Z][\w]*)/gm },
+];
+
+const CS_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
+  { kind: "class", re: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+|abstract\s+|sealed\s+|static\s+|partial\s+)*class\s+([A-Za-z_][\w]*)/gm },
+  { kind: "type", re: /^\s*(?:public\s+|private\s+|internal\s+|protected\s+)*(?:interface|struct|enum|record)\s+([A-Za-z_][\w]*)/gm },
+  { kind: "method", re: /^\s+(?:public\s+|private\s+|internal\s+|protected\s+|static\s+|virtual\s+|override\s+|abstract\s+|async\s+|sealed\s+)+(?:[A-Za-z_<>,\s\[\]?]+\s+)?([A-Za-z_][\w]*)\s*\([^)]*\)\s*(?:where[^{]+)?\{/gm },
+];
+
+const LANGUAGE_BY_EXT: Record<string, ParsedLanguage> = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust",
+  ".java": "java",
+  ".rb": "ruby",
+  ".cs": "csharp",
+};
+
+const PATTERNS_BY_LANG: Record<ParsedLanguage, Array<{ kind: SymbolRef["kind"]; re: RegExp }>> = {
+  typescript: TS_PATTERNS,
+  javascript: TS_PATTERNS,
+  python: PY_PATTERNS,
+  go: GO_PATTERNS,
+  rust: RUST_PATTERNS,
+  java: JAVA_PATTERNS,
+  ruby: RUBY_PATTERNS,
+  csharp: CS_PATTERNS,
+};
+
 // Generic call-site detector: `name(` not preceded by . is a *new* call;
 // `obj.name(` is a method call. Skip keywords.
 const KEYWORDS = new Set([
@@ -46,10 +111,9 @@ const KEYWORDS = new Set([
 export async function parseFile(filePath: string): Promise<ParsedFile> {
   const src = await readFile(filePath, "utf8");
   const ext = path.extname(filePath);
-  const language: ParsedFile["language"] =
-    ext === ".py" ? "python" : ext === ".js" || ext === ".jsx" ? "javascript" : "typescript";
+  const language: ParsedFile["language"] = LANGUAGE_BY_EXT[ext] ?? "typescript";
 
-  const patterns = language === "python" ? PY_PATTERNS : TS_PATTERNS;
+  const patterns = PATTERNS_BY_LANG[language];
   const symbols: SymbolRef[] = [];
   const seen = new Set<string>();
   const classScopes: Array<{ name: string; line: number; indent: number }> = [];
@@ -115,3 +179,18 @@ function nearestClass(
 
 export const TS_GLOB = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
 export const PY_GLOB = ["**/*.py"];
+export const GO_GLOB = ["**/*.go"];
+export const RUST_GLOB = ["**/*.rs"];
+export const JAVA_GLOB = ["**/*.java"];
+export const RUBY_GLOB = ["**/*.rb"];
+export const CSHARP_GLOB = ["**/*.cs"];
+
+export const ALL_SOURCE_GLOBS = [
+  ...TS_GLOB,
+  ...PY_GLOB,
+  ...GO_GLOB,
+  ...RUST_GLOB,
+  ...JAVA_GLOB,
+  ...RUBY_GLOB,
+  ...CSHARP_GLOB,
+];
