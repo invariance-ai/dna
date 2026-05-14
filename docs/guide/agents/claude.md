@@ -9,6 +9,7 @@ Writes:
 - `CLAUDE.md` — appends a `<!-- dna:start -->...<!-- dna:end -->` block with manual call instructions and standing-rules guidance. Idempotent: re-runs replace the block.
 - `.claude/skills/dna/SKILL.md` — the dna skill. Claude Code auto-loads it.
 - `.claude/settings.json` — five non-blocking hooks. See below.
+- `.mcp.json` — registers the `dna` MCP server (`dna serve`). Merged with any existing `mcpServers` entries. This is what makes the `mcp__dna__prepare_edit` tool callable.
 
 ## The five hooks
 
@@ -55,4 +56,4 @@ You should see Claude reference concrete line numbers and tests in its first res
 
 ## Uninstalling
 
-Delete the `.claude/skills/dna/` directory, remove the `<!-- dna:start -->...<!-- dna:end -->` block from `CLAUDE.md`, and clear `hooks` from `.claude/settings.json`.
+Delete the `.claude/skills/dna/` directory, remove the `<!-- dna:start -->...<!-- dna:end -->` block from `CLAUDE.md`, clear `hooks` from `.claude/settings.json`, and remove the `dna` key from `mcpServers` in `.mcp.json`.

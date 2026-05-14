@@ -48,7 +48,9 @@ export function registerInstall(program: Command): void {
     console.log("");
     console.log(kleur.green("installed") + " Claude Code CLI-first dna integration");
     console.log(kleur.dim(`Hooks call: ${dnaCmd(!!opts.useGlobal)}`));
-    console.log(kleur.dim("Hooks fire on session start, prompts, edits, and failures."));
+    console.log(
+      kleur.dim("Hooks fire on session start, prompts, edits, failures, and turn end."),
+    );
   });
 
   addRootOption(
@@ -179,6 +181,7 @@ async function upsertAgentMd(root: string, filename: string): Promise<void> {
 
 /**
  * Hook surface:
+ * - SessionStart      → rebuild the index, clear active feature, print preferences
  * - UserPromptSubmit  → auto-load context for symbols named in the prompt
  * - PreToolUse Edit*  → keep the index fresh (cheap, non-blocking)
  * - PostToolUse Bash  → record failures (records nothing if exit code was 0)
