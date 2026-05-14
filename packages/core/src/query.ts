@@ -25,7 +25,73 @@ import { classifyIntent, excludeForIntent } from "./intent.js";
 import { loadAssumptions } from "./assumptions.js";
 import { gapsForSymbol, type TestGap } from "./testgaps.js";
 import { loadPreferences, rankPreferences } from "./preferences.js";
-import type { Assumption, Question, Decision, Note } from "@invariance/dna-schemas";
+import { listTodos } from "./todos.js";
+import type { Assumption, Question, Decision, Note, TodoItem } from "@invariance/dna-schemas";
+
+interface ContextCaps {
+  callers: number;
+  callees: number;
+  notes: number;
+  decisions: number;
+  preferences: number;
+  provenance: number;
+  todos: number;
+}
+
+const BRIEF_CAPS: ContextCaps = {
+  callers: 5,
+  callees: 5,
+  notes: 1,
+  decisions: 1,
+  preferences: 1,
+  provenance: 0,
+  todos: 3,
+};
+
+const FULL_CAPS: ContextCaps = {
+  callers: 25,
+  callees: 25,
+  notes: 5,
+  decisions: 3,
+  preferences: 5,
+  provenance: 5,
+  todos: 10,
+};
+
+const TRIM_ORDER: Array<keyof Omit<ContextResult, "symbol" | "risk" | "truncated">> = [
+  "tests",
+  "provenance",
+  "preferences",
+  "todos",
+  "notes",
+  "decisions",
+  "callees",
+  "callers",
+  "invariants",
+];
+
+function trimToBudget(result: ContextResult, budgetTokens: number): ContextResult {
+  if (!budgetTokens || budgetTokens <= 0) return result;
+  const charBudget = budgetTokens * 4;
+  const droppedSections = new Set<string>();
+  let droppedCount = 0;
+  let serialized = JSON.stringify(result);
+  for (const key of TRIM_ORDER) {
+    if (serialized.length <= charBudget) break;
+    const arr = (result as unknown as Record<string, unknown[]>)[key];
+    if (!Array.isArray(arr) || arr.length === 0) continue;
+    while (arr.length > 0 && serialized.length > charBudget) {
+      arr.pop();
+      droppedCount += 1;
+      droppedSections.add(key);
+      serialized = JSON.stringify(result);
+    }
+  }
+  if (droppedCount > 0) {
+    result.truncated = { sections: [...droppedSections], droppedCount };
+  }
+  return result;
+}
 
 interface IndexLookups {
   byId: Map<string, SymbolRef>;
@@ -161,23 +227,25 @@ export async function getContext(
   const sym = resolveSymbol(args.symbol, ctx);
   if (!sym) throw new Error(`symbol not found: ${args.symbol}`);
 
+  const mode = args.mode ?? "brief";
+  const caps = mode === "full" ? FULL_CAPS : BRIEF_CAPS;
   const wants = new Set(args.strands);
-  const MAX_NEIGHBORS = 25;
-  const callers = wants.has("structural") ? callersOf(sym, ctx).slice(0, MAX_NEIGHBORS) : [];
-  const callees = wants.has("structural") ? calleesOf(sym, ctx).slice(0, MAX_NEIGHBORS) : [];
+
+  const callers = wants.has("structural") ? callersOf(sym, ctx).slice(0, caps.callers) : [];
+  const callees = wants.has("structural") ? calleesOf(sym, ctx).slice(0, caps.callees) : [];
   const tests = wants.has("tests") ? await testsForSymbol(sym.name, sym.file, ctx.root, ctx.index) : [];
-  let provenance =
-    wants.has("provenance") && (await isGitRepo(ctx.root))
-      ? await logForFile(ctx.root, sym.file, 20)
-      : [];
-  if (args.since) {
-    const since = parseSince(args.since);
-    provenance = provenance.filter((p) => isAfter(p.date, since));
+  let provenance: Awaited<ReturnType<typeof logForFile>> = [];
+  if (caps.provenance > 0 && wants.has("provenance") && (await isGitRepo(ctx.root))) {
+    provenance = await logForFile(ctx.root, sym.file, 20);
+    if (args.since) {
+      const since = parseSince(args.since);
+      provenance = provenance.filter((p) => isAfter(p.date, since));
+    }
+    if (args.authored_by) {
+      provenance = provenance.filter((p) => p.author === args.authored_by);
+    }
+    provenance = provenance.slice(0, caps.provenance);
   }
-  if (args.authored_by) {
-    provenance = provenance.filter((p) => p.author === args.authored_by);
-  }
-  provenance = provenance.slice(0, 5);
   const invariants = wants.has("invariants")
     ? invariantsFor(sym.qualified_name ?? sym.name, ctx.invariants)
     : [];
@@ -193,14 +261,30 @@ export async function getContext(
   if (args.authored_by) {
     decisionsFiltered = decisionsFiltered.filter((d) => d.made_by === args.authored_by);
   }
-  const notes = rankNotes(notesFiltered, 5);
-  const decisions = rankDecisions(decisionsFiltered, 3);
+  const notes = rankNotes(notesFiltered, caps.notes);
+  const decisions = rankDecisions(decisionsFiltered, caps.decisions);
   const prefsAll = await loadPreferences(ctx.root);
-  const preferences = rankPreferences(prefsAll, sym.name, sym.file, 5);
+  const preferences = rankPreferences(prefsAll, sym.name, sym.file, caps.preferences);
+
+  const todosAll = await listTodos(ctx.root, { file: sym.file, symbol: sym.name });
+  const todos: TodoItem[] = todosAll.filter((t) => !t.resolved_at).slice(0, caps.todos);
 
   const risk = computeRisk({ callers, tests, invariants, churn: await safeChurn(ctx.root, sym.file) });
 
-  return { symbol: sym, callers, callees, tests, provenance, invariants, notes, decisions, preferences, risk };
+  const result: ContextResult = {
+    symbol: sym,
+    callers,
+    callees,
+    tests,
+    provenance,
+    invariants,
+    notes,
+    decisions,
+    preferences,
+    risk,
+    todos,
+  };
+  return trimToBudget(result, args.budget ?? 1500);
 }
 
 export async function impactOf(
@@ -272,8 +356,17 @@ export async function prepareEdit(
   ctxOrRoot: QueryContext | string,
 ): Promise<PrepareEditResult> {
   const ctx = typeof ctxOrRoot === "string" ? await open(ctxOrRoot) : ctxOrRoot;
+  // prepareEdit already runs its own packByBudget on the markdown wrapper; ask
+  // for the full structural payload here so the markdown packer has all data
+  // to prioritise from.
   const c = await getContext(
-    { symbol: args.symbol, depth: args.depth ?? 2, strands: ["structural", "tests", "provenance", "invariants"] },
+    {
+      symbol: args.symbol,
+      depth: args.depth ?? 2,
+      strands: ["structural", "tests", "provenance", "invariants"],
+      mode: "full",
+      budget: 0,
+    },
     ctx,
   );
 

@@ -260,14 +260,31 @@ export type FeaturesFile = z.infer<typeof FeaturesFile>;
 export const Strand = z.enum(["structural", "tests", "provenance", "invariants"]);
 export type Strand = z.infer<typeof Strand>;
 
+export const ContextMode = z.enum(["brief", "full"]);
+export type ContextMode = z.infer<typeof ContextMode>;
+
 export const GetContextInput = z.object({
   symbol: z.string(),
   depth: z.number().int().min(1).max(5).default(2),
   strands: z.array(Strand).default(["structural", "tests", "provenance", "invariants"]),
   since: z.string().optional(),
   authored_by: z.string().optional(),
+  mode: ContextMode.optional(),
+  budget: z.number().int().nonnegative().optional(),
 });
 export type GetContextInput = z.infer<typeof GetContextInput>;
+
+export const TodoItem = z.object({
+  id: z.string(),
+  file: z.string(),
+  line: z.number().int().nonnegative().optional(),
+  symbol: z.string().optional(),
+  text: z.string(),
+  source: z.enum(["failure", "note", "manual"]),
+  created_at: z.string(),
+  resolved_at: z.string().optional(),
+});
+export type TodoItem = z.infer<typeof TodoItem>;
 
 export const ContextResult = z.object({
   symbol: SymbolRef,
@@ -280,6 +297,10 @@ export const ContextResult = z.object({
   decisions: z.array(Decision).default([]),
   preferences: z.array(Preference).default([]),
   risk: z.enum(["low", "medium", "high"]),
+  todos: z.array(TodoItem).default([]),
+  truncated: z
+    .object({ sections: z.array(z.string()), droppedCount: z.number().int().nonnegative() })
+    .optional(),
 });
 export type ContextResult = z.infer<typeof ContextResult>;
 
@@ -632,6 +653,21 @@ export const TOOLS = {
       "Move a lesson between scopes (e.g. promote a scoped note to CLAUDE.md or demote a global lesson to a symbol/file).",
     input: ReclassifyLessonInput,
     output: ReclassifyLessonResult,
+  },
+  list_todos: {
+    description:
+      "List TODOs DNA has captured for a file or symbol. Surfaces unfinished work (failed tests, captured notes) without editing source files.",
+    input: z.object({
+      file: z.string().optional(),
+      symbol: z.string().optional(),
+      include_resolved: z.boolean().optional(),
+    }),
+    output: z.object({ todos: z.array(TodoItem) }),
+  },
+  resolve_todo: {
+    description: "Mark a DNA-tracked TODO as resolved by id.",
+    input: z.object({ id: z.string() }),
+    output: z.object({ resolved: z.boolean() }),
   },
 } as const;
 

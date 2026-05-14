@@ -49,6 +49,11 @@ import { registerAudit } from "./commands/audit.js";
 import { registerReviewMemory } from "./commands/review-memory.js";
 import { registerVerifyContract } from "./commands/verify-contract.js";
 import { registerCheckProposal } from "./commands/check-proposal.js";
+import { registerDoctor } from "./commands/doctor.js";
+import { registerPulse } from "./commands/pulse.js";
+import { registerSeed } from "./commands/seed.js";
+import { registerVerify } from "./commands/verify.js";
+import { registerSync } from "./commands/sync.js";
 
 const program = new Command()
   .name("dna")
@@ -104,8 +109,66 @@ registerAudit(program);
 registerReviewMemory(program);
 registerVerifyContract(program);
 registerCheckProposal(program);
+registerDoctor(program);
+registerPulse(program);
+registerSeed(program);
+registerVerify(program);
+registerSync(program);
+
+// Curate `dna --help`: only README-documented commands are visible by default.
+// Experimental/internal commands stay registered (and still run) but are hidden
+// from the help listing to keep first-run discoverability tight.
+// Surface the full list with `dna --help-all` (commander prints hidden commands then).
+const PRIMARY = new Set([
+  "init",
+  "install",
+  "index",
+  "prepare",
+  "context",
+  "find",
+  "trace",
+  "impact",
+  "tests",
+  "invariants",
+  "learn",
+  "notes",
+  "learn-todos",
+  "decide",
+  "decisions",
+  "serve",
+  "suggest",
+  "doctor",
+  "pulse",
+  "seed",
+  "verify",
+  "sync",
+]);
+for (const cmd of program.commands) {
+  if (!PRIMARY.has(cmd.name())) {
+    (cmd as unknown as { _hidden: boolean })._hidden = true;
+  }
+}
+program.showHelpAfterError("(use `dna --help` to see available commands)");
 
 program.parseAsync(process.argv).catch((err) => {
-  console.error(err.message);
+  const msg = (err && err.message) || String(err);
+  // Translate the most common first-run failure: command that needs the index
+  // before `dna index` has run. ENOENT on .dna/index/symbols.json bubbles up
+  // from readIndex(); the raw stack is not actionable.
+  if (
+    err &&
+    (err.code === "ENOENT" || /ENOENT/.test(msg)) &&
+    /\.dna\/(index\/symbols\.json|config\.yml)/.test(msg)
+  ) {
+    const isConfig = /config\.yml/.test(msg);
+    console.error(
+      isConfig
+        ? "dna is not initialized in this directory. Run `dna init` first."
+        : "No symbol index found. Run `dna index` first (or `dna init` if this is a new repo).",
+    );
+    console.error("Run `dna doctor` to see what else is missing.");
+    process.exit(1);
+  }
+  console.error(msg);
   process.exit(1);
 });

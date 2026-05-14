@@ -27,6 +27,8 @@ import {
   persistLesson,
   listLessons,
   reclassifyLesson,
+  listTodos,
+  resolveTodo,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -235,6 +237,20 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         .sort((a, b) => b.score - a.score)
         .slice(0, a.limit ?? 10);
       return { candidates: cands };
+    }
+    case "list_todos": {
+      const a = args as { file?: string; symbol?: string; include_resolved?: boolean };
+      const todos = await listTodos(root, {
+        file: a.file,
+        symbol: a.symbol,
+        includeResolved: !!a.include_resolved,
+      });
+      return { todos };
+    }
+    case "resolve_todo": {
+      const a = args as { id: string };
+      const resolved = await resolveTodo(root, a.id);
+      return { resolved };
     }
     default:
       throw new Error(`Tool ${name} dispatch not implemented`);

@@ -48,9 +48,27 @@ export function clearIndexCache(): void {
   indexCache.clear();
 }
 
+export class IndexNotBuiltError extends Error {
+  readonly code = "DNA_INDEX_NOT_BUILT";
+  constructor(public readonly path: string) {
+    super(
+      `dna index not found at ${path}. Run \`dna index\` to build it (or \`dna init\` if this repo isn't set up yet).`,
+    );
+    this.name = "IndexNotBuiltError";
+  }
+}
+
 export async function readIndex(root: string): Promise<DnaIndex> {
   const p = indexPath(root);
-  const st = await stat(p);
+  let st;
+  try {
+    st = await stat(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new IndexNotBuiltError(p);
+    }
+    throw err;
+  }
   const cached = indexCache.get(p);
   if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
     return cached.index;
