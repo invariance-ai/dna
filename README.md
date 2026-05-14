@@ -31,11 +31,12 @@ No install required — `npx` runs the latest published version each time:
 ```bash
 cd your-repo
 npx -y @invariance/dna init                # writes .dna/config.yml + .dna/invariants.yml
-npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks
+npx -y @invariance/dna install claude      # writes CLAUDE.md + .claude skill/hooks + .mcp.json
 npx -y @invariance/dna install codex       # writes AGENTS.md + .codex/config.toml (notify + MCP)
 npx -y @invariance/dna install cursor      # writes .cursor/rules/dna.mdc + .cursor/mcp.json
 npx -y @invariance/dna index               # builds the symbol graph
 npx -y @invariance/dna learn-todos         # bootstrap notes from existing TODO/FIXME
+npx -y @invariance/dna invariant init --stack stripe   # optional: drop in a starter pack
 ```
 
 Prefer a global install? `npm install -g @invariance/dna`, then drop the `npx -y` prefix and pass `--use-global` to the installers so generated hooks/MCP entries call `dna` directly instead of `npx`.

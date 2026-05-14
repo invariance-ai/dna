@@ -15,9 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version is read from the root package.json `packageManager` field.
+      # Passing an explicit `version:` here conflicts with it (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -26,11 +26,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Build first: workspace packages (dna-llm, dna-cli, …) import sibling
+      # packages by their published entrypoints, so the .d.ts files must exist
+      # before `tsc --noEmit` can resolve `@invariance/dna-schemas` etc.
+      - run: pnpm -r build
+
       - run: pnpm -r typecheck
 
       - run: pnpm -r test
-
-      - run: pnpm -r build
 
   smoke:
     runs-on: ubuntu-latest
@@ -38,9 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version is read from the root package.json `packageManager` field.
+      # Passing an explicit `version:` here conflicts with it (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -59,6 +62,7 @@ jobs:
           echo "export function hello() { return 'hi'; }" > hello.ts
           git add . && git -c user.email=ci@x -c user.name=ci commit -q -m init
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" init
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" install claude
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" index
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" doctor
           node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" find hello

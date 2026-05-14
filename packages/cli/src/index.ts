@@ -4,6 +4,7 @@ import { registerContext } from "./commands/context.js";
 import { registerImpact } from "./commands/impact.js";
 import { registerTests } from "./commands/tests.js";
 import { registerInvariants } from "./commands/invariants.js";
+import { registerInvariant } from "./commands/invariant.js";
 import { registerInit } from "./commands/init.js";
 import { registerIndex } from "./commands/index.js";
 import { registerFind } from "./commands/find.js";
@@ -88,6 +89,7 @@ export function buildProgram(): Command {
     "impact",
     "tests",
     "invariants",
+    "invariant",
     "learn",
     "notes",
     "learn-todos",
@@ -131,6 +133,7 @@ registerPrIntent(program);
 registerImpact(program);
 registerTests(program);
 registerInvariants(program);
+registerInvariant(program);
 registerFind(program);
 registerTrace(program);
 registerServe(program);

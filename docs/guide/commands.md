@@ -253,6 +253,19 @@ decisions [options] [symbol]
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
+## `doctor`
+
+Check that dna is installed, indexed, and wired into your agent
+
+```
+doctor [options]
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `feature`
 
 Named bags of symbols, learned by observing what the agent touches
@@ -599,6 +612,28 @@ install cursor [options]
 - `--force` — Overwrite existing dna-managed Cursor files
 - `--skip-mcp` — Do not write .cursor/mcp.json (rule file only)
 - `--use-global` — Configure MCP to call `dna` directly (requires global install)
+- `--root <path>` — Repo root (default: cwd)
+
+## `invariant`
+
+Author invariants — starter packs and (future) interactive flows
+
+```
+invariant [options] [command]
+```
+
+### `invariant init`
+
+Append a starter pack of invariants to .dna/invariants.yml
+
+```
+invariant init [options]
+```
+
+**Options:**
+
+- `--stack <name>` — Pack to install: stripe | auth | gdpr | multi-tenant | http-api
+- `--dry-run` — Print the merged file without writing
 - `--root <path>` — Repo root (default: cwd)
 
 ## `invariants`

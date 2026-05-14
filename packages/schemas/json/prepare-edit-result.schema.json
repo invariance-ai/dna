@@ -1,0 +1,269 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/invariance-ai/dna/schemas/prepare-edit-result.schema.json",
+  "title": "dna prepare_edit result (versioned)",
+  "$ref": "#/definitions/dna prepare_edit result (versioned)",
+  "definitions": {
+    "dna prepare_edit result (versioned)": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "number",
+          "const": 1,
+          "default": 1
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "invariants_to_respect": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "applies_to": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rule": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "warn",
+                  "block"
+                ],
+                "default": "warn"
+              }
+            },
+            "required": [
+              "name",
+              "applies_to",
+              "rule"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "lesson": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "default": "medium"
+              },
+              "promoted": {
+                "type": "boolean",
+                "default": false
+              },
+              "recorded_at": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "human",
+                  "doc",
+                  "git",
+                  "promoted",
+                  "todo"
+                ],
+                "default": "agent"
+              },
+              "id": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "symbol",
+                  "file",
+                  "feature",
+                  "global"
+                ],
+                "default": "symbol"
+              },
+              "applies_to": {
+                "type": "string"
+              },
+              "classifier": {
+                "type": "object",
+                "properties": {
+                  "signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": []
+                  },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "used_llm": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "model": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "confidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "symbol",
+              "lesson",
+              "recorded_at"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string"
+              },
+              "rejected_alternative": {
+                "type": "string"
+              },
+              "rationale": {
+                "type": "string"
+              },
+              "made_by": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string"
+              },
+              "recorded_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "symbol",
+              "decision",
+              "recorded_at"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "preferences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "repo",
+                  "user",
+                  "global"
+                ],
+                "default": "repo"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto",
+                  "wizard"
+                ],
+                "default": "manual"
+              },
+              "recorded_at": {
+                "type": "string"
+              },
+              "hits": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              }
+            },
+            "required": [
+              "id",
+              "text",
+              "recorded_at"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        },
+        "tests_to_run": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "required": [
+        "markdown",
+        "invariants_to_respect",
+        "tests_to_run",
+        "risk"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
