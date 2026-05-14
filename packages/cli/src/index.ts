@@ -89,6 +89,7 @@ export function buildProgram(): Command {
     "impact",
     "tests",
     "invariants",
+    "invariant",
     "learn",
     "notes",
     "learn-todos",

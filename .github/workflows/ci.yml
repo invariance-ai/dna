@@ -15,9 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version is read from the root package.json `packageManager` field.
+      # Passing an explicit `version:` here conflicts with it (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -38,9 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version is read from the root package.json `packageManager` field.
+      # Passing an explicit `version:` here conflicts with it (ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:

@@ -253,6 +253,19 @@ decisions [options] [symbol]
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
+## `doctor`
+
+Check that dna is installed, indexed, and wired into your agent
+
+```
+doctor [options]
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `feature`
 
 Named bags of symbols, learned by observing what the agent touches
