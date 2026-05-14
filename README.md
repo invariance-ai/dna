@@ -63,7 +63,7 @@ dna init                                              # 1. write .dna/config.yml
 dna install claude                                    # 2. wire CLAUDE.md + .claude hooks (or: install codex)
 dna index                                             # 3. build the symbol graph
 dna prepare <symbol> --intent "<one-liner>"           # 4. ⭐ decision-ready brief before edits
-dna learn <symbol> --lesson "<one sentence>"          # 5. record what an edit taught you
+dna lessons record "<one sentence>"                   # 5. record what an edit taught you
 ```
 
 Everything below is the full surface for power users and automation.
@@ -81,7 +81,8 @@ dna find "<query>"                                    # fuzzy symbol search
 dna trace <symbol>                                    # git provenance
 
 # Writing — anchored memory
-dna learn <symbol> --lesson "..." [--severity low|medium|high] [--evidence <ref>]
+dna lessons record "..."                              # record a lesson; auto-classified global/scoped
+dna learn <symbol> --lesson "..." [--severity low|medium|high] [--evidence <ref>]   # legacy: always symbol-scoped
 dna notes <symbol>                                    # what previous edits left behind
 dna learn-todos                                       # one-shot: lift TODO/FIXME into notes
 dna decide <symbol> --decision "..." [--rejected "..."] [--rationale "..."]
@@ -108,7 +109,7 @@ All read commands accept `--json` (stable contract for tool chaining) or `--mark
 
 Coding agents already have Bash. Treat `dna` like `rg`: a local command the agent runs before and after edits. This is the primary integration surface.
 
-For **Claude Code**, the installer wires four non-blocking hooks: `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
+For **Claude Code**, the installer wires five non-blocking hooks: `SessionStart` (rebuilds the index, prints standing preferences), `UserPromptSubmit` (auto-loads context for symbols named in your prompt), `PreToolUse` Edit/Write (refreshes the index), `PostToolUse` Bash (records failures against the last-prepared symbol), and `Stop` (distills the session into Decisions):
 
 ```bash
 npx -y @invariance/dna install claude
@@ -135,7 +136,7 @@ Before editing any non-trivial symbol, run:
   dna prepare <symbol> --intent "<one-line description>"
 
 After a successful change that taught you something non-obvious, run:
-  dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
+  dna lessons record "<one sentence>"
 
 To check what tests to run after editing:
   dna tests <symbol> --json

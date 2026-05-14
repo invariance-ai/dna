@@ -82,12 +82,22 @@ Before creating a new helper, search for reusable code:
 dna find "<keyword>" --json
 \`\`\`
 
-After a successful edit, persist durable lessons:
+When you understand what the user is working on, tag the session once so dna
+learns which symbols belong to that feature:
 
 \`\`\`bash
-dna learn <symbol> --lesson "<one sentence>" --severity <low|medium|high>
+dna feature use <short-kebab-label>
+\`\`\`
+
+After a successful edit, persist durable lessons and decisions:
+
+\`\`\`bash
+dna lessons record "<one sentence>"          # auto-classified: global → CLAUDE.md; scoped → notes
 dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
 \`\`\`
+
+\`dna learn <symbol> --lesson "<…>"\` still works but is legacy — always
+symbol-scoped. Prefer \`dna lessons record\`.
 `;
 
 /**

@@ -14,7 +14,7 @@ npx -y @invariance/dna index
 What just happened:
 
 - `init` wrote `.dna/config.yml` (what to index) and `.dna/invariants.yml` (an example invariant you can delete).
-- `install claude` wrote a `CLAUDE.md` block, a `.claude/skills/dna/SKILL.md` skill, and four non-blocking hooks in `.claude/settings.json`.
+- `install claude` wrote a `CLAUDE.md` block, a `.claude/skills/dna/SKILL.md` skill, five non-blocking hooks in `.claude/settings.json`, and a `dna` entry in `.mcp.json` (registers the dna MCP server).
 - `index` built the symbol graph at `.dna/index.json`. Re-runs are incremental.
 
 If you prefer a global install: `npm install -g @invariance/dna`, then add `--use-global` to the install commands so hooks call `dna` directly instead of `npx`.
@@ -29,6 +29,8 @@ dna tests <symbol>               # tests that protect this symbol
 ```
 
 Pick a real symbol from your repo and try each one. Every command accepts `--json` (machine-readable) or `--markdown` (LLM-readable).
+
+In Claude Code the same surface is also exposed as MCP tools — `mcp__dna__prepare_edit` returns a decision-ready brief in one structured call and is the preferred entry point for agents over fanning out to Glob/Read/Grep.
 
 ## 3. Ask an agent something (3 min)
 
