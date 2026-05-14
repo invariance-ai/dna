@@ -282,6 +282,49 @@ async function unlinkSafe(p: string): Promise<void> {
   }
 }
 
+/**
+ * Mutate a single note by id across all scope directories.
+ * Returns the updated note (and its file path) or null if not found.
+ */
+export async function updateNoteById(
+  root: string,
+  id: string,
+  patch: Partial<NoteT>,
+): Promise<{ note: NoteT; path: string } | null> {
+  const dirs = [DIR, FILE_DIR, FEATURE_DIR];
+  for (const dirRel of dirs) {
+    try {
+      const dir = path.join(root, dirRel);
+      const files = await readdir(dir);
+      for (const f of files) {
+        if (!f.endsWith(".yml")) continue;
+        const abs = path.join(dir, f);
+        const raw = await readFile(abs, "utf8");
+        const data = parseYaml(raw);
+        if (!Array.isArray(data)) continue;
+        let hit: NoteT | null = null;
+        const next = data.map((d) => {
+          try {
+            const note = Note.parse(d);
+            if (note.id !== id) return note;
+            hit = Note.parse({ ...note, ...patch });
+            return hit;
+          } catch {
+            return d as NoteT;
+          }
+        });
+        if (hit) {
+          await writeFile(abs, stringifyYaml(next));
+          return { note: hit, path: path.relative(root, abs) };
+        }
+      }
+    } catch {
+      /* dir missing */
+    }
+  }
+  return null;
+}
+
 export async function loadAllNotes(root: string): Promise<NoteT[]> {
   try {
     const files = await readdir(path.join(root, DIR));
