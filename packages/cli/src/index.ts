@@ -50,6 +50,7 @@ import { registerAudit } from "./commands/audit.js";
 import { registerReviewMemory } from "./commands/review-memory.js";
 import { registerVerifyContract } from "./commands/verify-contract.js";
 import { registerCheckProposal } from "./commands/check-proposal.js";
+import { registerDoctor } from "./commands/doctor.js";
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -67,13 +68,43 @@ export function buildProgram(): Command {
       "  dna prepare <symbol> --intent <...>   decision-ready brief before edits",
       "  dna learn <symbol> --lesson <...>     record what an edit taught you",
       "",
-      "Everything else (44 commands) is the full surface for power users and automation.",
-      "See https://github.com/invariance-ai/dna#cli for the grouped reference.",
+      "Other essentials: dna doctor (health check), dna find, dna context, dna impact, dna tests.",
+      "Full surface (40+ commands) is available — see https://github.com/invariance-ai/dna#cli.",
       "",
     ].join("\n"),
   );
 
   registerAll(program);
+
+  // Curate `dna --help`: only README-documented commands are visible by default.
+  // The full surface still runs and is reachable via `dna <name> --help`.
+  const PRIMARY = new Set([
+    "init",
+    "install",
+    "index",
+    "prepare",
+    "context",
+    "find",
+    "trace",
+    "impact",
+    "tests",
+    "invariants",
+    "learn",
+    "notes",
+    "learn-todos",
+    "decide",
+    "decisions",
+    "serve",
+    "suggest",
+    "doctor",
+  ]);
+  for (const cmd of program.commands) {
+    if (!PRIMARY.has(cmd.name())) {
+      (cmd as unknown as { _hidden: boolean })._hidden = true;
+    }
+  }
+  program.showHelpAfterError("(use `dna --help` to see available commands)");
+
   return program;
 }
 
@@ -128,6 +159,7 @@ registerAudit(program);
 registerReviewMemory(program);
   registerVerifyContract(program);
   registerCheckProposal(program);
+  registerDoctor(program);
 }
 
 const isMain = (() => {
@@ -144,8 +176,22 @@ const isMain = (() => {
 if (isMain) {
   buildProgram()
     .parseAsync(process.argv)
-    .catch((err: Error) => {
-      console.error(err.message);
+    .catch((err: Error & { code?: string }) => {
+      const msg = err.message ?? String(err);
+      if (
+        (err.code === "ENOENT" || /ENOENT/.test(msg)) &&
+        /\.dna\/(index\/symbols\.json|config\.yml)/.test(msg)
+      ) {
+        const isConfig = /config\.yml/.test(msg);
+        console.error(
+          isConfig
+            ? "dna is not initialized in this directory. Run `dna init` first."
+            : "No symbol index found. Run `dna index` first (or `dna init` if this is a new repo).",
+        );
+        console.error("Run `dna doctor` to see what else is missing.");
+        process.exit(1);
+      }
+      console.error(msg);
       process.exit(1);
     });
 }
