@@ -4,6 +4,56 @@
 
 `dna` exposes its full surface as a CLI. Every read command supports `--json` (stable contract) and `--markdown` (LLM-optimal); ANSI colors auto-strip when piped.
 
+## `alias`
+
+Manage location aliases (human names → directories)
+
+```
+alias [options] [command]
+```
+
+### `alias set`
+
+Pin an alias to a location (file/dir) and optional feature
+
+```
+alias set [options] <name>
+```
+
+**Options:**
+
+- `--file <path>` — File the alias points at
+- `--dir <path>` — Directory the alias anchors to
+- `--feature <label>` — Feature linked to this location
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+### `alias list`
+
+List all location aliases
+
+```
+alias list [options]
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+### `alias show`
+
+Show a single alias binding
+
+```
+alias show [options] <name>
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `ask`
 
 Record an open question against a symbol
@@ -113,6 +163,21 @@ Run repo-edit-bench (harness lands in v0.2)
 bench [options]
 ```
 
+## `capture-directive`
+
+Heuristically capture location-scoped directives from a prompt (UserPromptSubmit hook)
+
+```
+capture-directive [options]
+```
+
+**Options:**
+
+- `--text <t>` — Prompt text (otherwise read from stdin)
+- `--emit` — Print captured directives back to stdout (markdown block)
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `capture-preference`
 
 Heuristically extract preferences from a prompt (UserPromptSubmit hook)
@@ -175,6 +240,22 @@ context [options] [symbol]
 - `--since <when>` — Drop notes/decisions/provenance older than this (ISO or 7d/2w/3mo)
 - `--authored-by <name>` — Filter decisions + provenance to one author
 - `--feature <label>` — Aggregate context for a feature instead of a symbol
+- `--mode <mode>` — brief|full payload (default brief) *(default: "brief")*
+- `--budget <n>` — Token budget (default 1500; 0 = unlimited) *(default: 1500)*
+- `--root <path>` — Repo root (default: cwd)
+
+## `context-from-path`
+
+Surface area context for a searched/read path (PreToolUse hook for Grep|Glob|Read)
+
+```
+context-from-path [options]
+```
+
+**Options:**
+
+- `--text <t>` — Path or pattern (otherwise read hook JSON from stdin)
+- `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
 ## `context-from-prompt`
@@ -250,6 +331,48 @@ decisions [options] [symbol]
 **Options:**
 
 - `--all` — List every decision
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+## `directive`
+
+Manage location-scoped directives (area notes) and their aliases
+
+```
+directive [options] [command]
+```
+
+### `directive add`
+
+Record a location-scoped directive (defaults to the active area)
+
+```
+directive add [options] <text>
+```
+
+**Options:**
+
+- `--area <dir>` — Directory path the directive applies to
+- `--alias <name>` — Bind a human-friendly name to the area (e.g. home)
+- `--do` — Force polarity to 'do'
+- `--dont` — Force polarity to 'dont'
+- `--severity <level>` — low | medium | high *(default: "medium")*
+- `--evidence <ref>` — PR/commit/doc backing this directive
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+### `directive list`
+
+List directives for an area (defaults to the active area)
+
+```
+directive list [options]
+```
+
+**Options:**
+
+- `--area <dir>` — Directory path
+- `--alias <name>` — Alias name
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
@@ -722,7 +845,7 @@ lessons list [options]
 
 **Options:**
 
-- `--scope <scope>` — global | symbol | file | feature
+- `--scope <scope>` — global | symbol | file | feature | area
 - `--target <t>` — Filter by target
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
@@ -737,7 +860,7 @@ lessons reclassify [options] <id>
 
 **Options:**
 
-- `--to <scope>` — global | symbol | file | feature
+- `--to <scope>` — global | symbol | file | feature | area
 - `--to-target <t>` — Required for symbol|file|feature
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
@@ -881,6 +1004,21 @@ promote [options] <symbol>
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
+## `pulse`
+
+Diff-time risk report: invariants, untested callers, notes, decisions, plus a single risk score
+
+```
+pulse [options]
+```
+
+**Options:**
+
+- `--base <ref>` — Diff base (default HEAD) *(default: "HEAD")*
+- `--json` — Emit JSON
+- `--github` — Emit GitHub PR comment payload (markdown body only)
+- `--root <path>` — Repo root (default: cwd)
+
 ## `question-resolve`
 
 Resolve (or wontfix) an open question by id
@@ -974,6 +1112,22 @@ runtime show [options] <symbol>
 
 **Options:**
 
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+## `seed`
+
+Bootstrap proposed notes/decisions from git log + gh PRs. Writes to .dna/proposals.yml unless --apply.
+
+```
+seed [options]
+```
+
+**Options:**
+
+- `--commits <n>` — Number of commits to scan *(default: "200")*
+- `--prs <n>` — Number of merged PRs to scan *(default: "50")*
+- `--apply` — Append to .dna/notes and .dna/decisions instead of writing to proposals.yml *(default: false)*
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
@@ -1081,6 +1235,22 @@ suggest [options]
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
+## `sync`
+
+Fetch + merge .dna/ from the repo's git remote; dedupe notes/decisions by id
+
+```
+sync [options]
+```
+
+**Options:**
+
+- `--remote <name>` — Git remote (default origin) *(default: "origin")*
+- `--branch <name>` — Branch (default current)
+- `--push` — Push after merging *(default: false)*
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `test-record`
 
 Record a test run tied to active symbols (surfaces in `dna prepare` later)
@@ -1141,6 +1311,33 @@ validate [options]
 - `--json` — Emit JSON
 - `--quiet` — Print only on failure
 - `--limit <n>` — Max stale paths to list *(default: 20)*
+- `--root <path>` — Repo root (default: cwd)
+
+## `verify`
+
+Review provenance: list unverified notes, or verify a note by id
+
+```
+verify [options] [command] [id]
+```
+
+**Options:**
+
+- `--by <who>` — Verifier identity (default git user.email)
+- `--root <path>` — Repo root (default: cwd)
+
+### `verify list`
+
+List unverified notes ranked by severity * (1 - confidence)
+
+```
+verify list [options]
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--min <n>` — Minimum priority score (default 0.2) *(default: "0.2")*
 - `--root <path>` — Repo root (default: cwd)
 
 ## `verify-contract`

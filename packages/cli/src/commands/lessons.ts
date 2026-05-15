@@ -37,7 +37,14 @@ interface ReclassifyOpts extends RootOption {
 
 function validScope(s: string | undefined): NoteScope | undefined {
   if (!s) return undefined;
-  if (s === "global" || s === "symbol" || s === "file" || s === "feature") return s;
+  if (
+    s === "global" ||
+    s === "symbol" ||
+    s === "file" ||
+    s === "feature" ||
+    s === "area"
+  )
+    return s;
   return undefined;
 }
 
@@ -140,7 +147,7 @@ export function registerLessons(program: Command): void {
       }
 
       const meta = classifierMeta(
-        { scope, target, signals, confidence, candidates: { symbols: [], files: [], features: [] }, ambiguous: false },
+        { scope, target, signals, confidence, candidates: { symbols: [], files: [], features: [], areas: [] }, ambiguous: false },
         used_llm,
         model,
       );
@@ -185,7 +192,7 @@ export function registerLessons(program: Command): void {
     cmd
       .command("list")
       .description("List recorded lessons across scopes")
-      .option("--scope <scope>", "global | symbol | file | feature")
+      .option("--scope <scope>", "global | symbol | file | feature | area")
       .option("--target <t>", "Filter by target")
       .option("--json", "Emit JSON"),
   ).action(async (opts: ListOpts) => {
@@ -213,14 +220,14 @@ export function registerLessons(program: Command): void {
     cmd
       .command("reclassify <id>")
       .description("Move a lesson between scopes (e.g. promote scoped → global)")
-      .requiredOption("--to <scope>", "global | symbol | file | feature")
+      .requiredOption("--to <scope>", "global | symbol | file | feature | area")
       .option("--to-target <t>", "Required for symbol|file|feature")
       .option("--json", "Emit JSON"),
   ).action(async (id: string, opts: ReclassifyOpts) => {
     const root = resolveRoot(opts);
     const to = validScope(opts.to);
     if (!to) {
-      console.error(kleur.red(`--to must be one of: global, symbol, file, feature`));
+      console.error(kleur.red(`--to must be one of: global, symbol, file, feature, area`));
       process.exitCode = 1;
       return;
     }

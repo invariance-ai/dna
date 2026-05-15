@@ -92,10 +92,11 @@ export type NoteSource = z.infer<typeof NoteSource>;
 
 /**
  * Where a lesson lives. `symbol` is the legacy default and remains the storage
- * for `.dna/notes/{symbol}.yml`. `file` and `feature` write to dedicated
- * subdirectories. `global` lives in the CLAUDE.md `dna:global-lessons` block.
+ * for `.dna/notes/{symbol}.yml`. `file`, `feature`, and `area` write to
+ * dedicated subdirectories. `area` is keyed by a directory path — a location.
+ * `global` lives in the CLAUDE.md `dna:global-lessons` block.
  */
-export const NoteScope = z.enum(["symbol", "file", "feature", "global"]);
+export const NoteScope = z.enum(["symbol", "file", "feature", "area", "global"]);
 export type NoteScope = z.infer<typeof NoteScope>;
 
 export const ClassifierMeta = z.object({
@@ -249,9 +250,28 @@ export const Feature = z.object({
 });
 export type Feature = z.infer<typeof Feature>;
 
+/**
+ * An alias is a human-friendly name ("home") that resolves to a location:
+ * a file, the directory it lives in, and optionally a linked feature label.
+ * Stored in the `aliases` map of `.dna/features.yml`. `source: user` bindings
+ * are pinned and never overwritten by auto-learning.
+ */
+export const AliasBinding = z.object({
+  name: z.string(),
+  file: z.string().optional(),
+  dir: z.string().optional(),
+  feature: z.string().optional(),
+  source: z.enum(["user", "auto"]).default("auto"),
+  created_at: z.string(),
+  last_resolved: z.string(),
+  hits: z.number().int().nonnegative().default(0),
+});
+export type AliasBinding = z.infer<typeof AliasBinding>;
+
 export const FeaturesFile = z.object({
   version: z.literal(1),
   features: z.record(z.string(), Feature).default({}),
+  aliases: z.record(z.string(), AliasBinding).default({}),
 });
 export type FeaturesFile = z.infer<typeof FeaturesFile>;
 
@@ -450,6 +470,36 @@ export const ReclassifyLessonResult = z.object({
   path: z.string(),
 });
 export type ReclassifyLessonResult = z.infer<typeof ReclassifyLessonResult>;
+
+/* ---------- Directives: location-scoped instructions (v0.8) ---------- */
+
+export const RecordDirectiveInput = z.object({
+  directive: z.string().describe(
+    "The location-scoped instruction, e.g. \"don't use inline styles here\".",
+  ),
+  polarity: z.enum(["do", "dont"]).optional().describe(
+    "Whether this is a do/avoid directive. Auto-detected from phrasing if omitted.",
+  ),
+  area: z.string().optional().describe(
+    "Directory path or alias name. Defaults to the active area (resolved from the active feature's bound alias, or the most recently edited file's directory).",
+  ),
+  alias: z.string().optional().describe(
+    "Bind/learn this human-friendly name for the area (e.g. \"home\").",
+  ),
+  evidence: z.string().optional(),
+  severity: NoteSeverity.default("medium"),
+});
+export type RecordDirectiveInput = z.infer<typeof RecordDirectiveInput>;
+
+export const RecordDirectiveResult = z.object({
+  scope: z.literal("area"),
+  area: z.string(),
+  alias: z.string().optional(),
+  id: z.string(),
+  path: z.string(),
+  polarity: z.enum(["do", "dont"]),
+});
+export type RecordDirectiveResult = z.infer<typeof RecordDirectiveResult>;
 
 export const SuggestInput = z.object({
   min_count: z.number().int().min(1).default(3),
@@ -940,6 +990,12 @@ export const TOOLS = {
       "Move a lesson between scopes (e.g. promote a scoped note to CLAUDE.md or demote a global lesson to a symbol/file).",
     input: ReclassifyLessonInput,
     output: ReclassifyLessonResult,
+  },
+  record_directive: {
+    description:
+      "Call this when the user gives a location-scoped instruction during a task — e.g. \"don't do X here\", \"always Y in this folder\", \"in the home page, avoid Z\". dna resolves \"here\"/\"this\" to the active area (a directory) and persists the directive as an area-scoped note, so future edits anywhere in that directory inherit it. Pass `area` or `alias` to target a specific location; otherwise the active area is used. Use this in preference to record_lesson when the instruction is about a place rather than a symbol.",
+    input: RecordDirectiveInput,
+    output: RecordDirectiveResult,
   },
   list_todos: {
     description:

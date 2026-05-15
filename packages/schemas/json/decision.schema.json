@@ -27,6 +27,35 @@
         },
         "recorded_at": {
           "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "human",
+            "agent",
+            "transcript",
+            "pr",
+            "seed",
+            "promoted"
+          ],
+          "default": "human"
+        },
+        "evidence_link": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verified_by": {
+          "type": "string"
+        },
+        "verified_at": {
+          "type": "string"
         }
       },
       "required": [

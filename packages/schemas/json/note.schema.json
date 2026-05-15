@@ -40,7 +40,12 @@
             "doc",
             "git",
             "promoted",
-            "todo"
+            "todo",
+            "pr",
+            "incident",
+            "transcript",
+            "seed",
+            "pulse"
           ],
           "default": "agent"
         },
@@ -53,6 +58,7 @@
             "symbol",
             "file",
             "feature",
+            "area",
             "global"
           ],
           "default": "symbol"
@@ -87,6 +93,23 @@
             "confidence"
           ],
           "additionalProperties": false
+        },
+        "evidence_link": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verified_by": {
+          "type": "string"
+        },
+        "verified_at": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
         }
       },
       "required": [

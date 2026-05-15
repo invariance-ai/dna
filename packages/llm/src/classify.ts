@@ -19,6 +19,7 @@ export interface ClassifyCandidates {
   symbols: string[];
   files: string[];
   features: string[];
+  areas?: string[];
 }
 
 export interface ClassifyDecision {
@@ -41,6 +42,8 @@ function hashKey(lesson: string, cands: ClassifyCandidates): string {
   h.update(cands.files.sort().join(","));
   h.update("\0");
   h.update(cands.features.sort().join(","));
+  h.update("\0");
+  h.update((cands.areas ?? []).slice().sort().join(","));
   return h.digest("hex").slice(0, 16);
 }
 
@@ -63,11 +66,12 @@ async function saveCache(root: string, cache: CacheFile): Promise<void> {
 
 const SYSTEM = `You label engineering lessons by scope. Return STRICT JSON: {"scope": "...", "target": "...", "reason": "..."}.
 
-scope ∈ {"global", "symbol", "file", "feature"}:
+scope ∈ {"global", "symbol", "file", "feature", "area"}:
 - global: rule applies repo-wide regardless of file or symbol ("always X", "the codebase…", policy).
 - symbol: rule is only true for one named function/class/method.
 - file: rule is only true for one specific file/module path.
 - feature: rule applies to a feature cluster (auth, refunds, billing, etc.).
+- area: rule applies to a location/directory ("here", "this folder", "the home page").
 
 Prefer the NARROWEST scope that's still true.
 The "target" must be one of the provided candidates for non-global scopes; omit it for global.
@@ -85,6 +89,7 @@ function buildUserPrompt(
     `Candidate symbols: ${cands.symbols.length ? cands.symbols.join(", ") : "(none)"}`,
     `Candidate files:   ${cands.files.length ? cands.files.join(", ") : "(none)"}`,
     `Candidate features:${cands.features.length ? " " + cands.features.join(", ") : " (none)"}`,
+    `Candidate areas:   ${cands.areas?.length ? cands.areas.join(", ") : "(none)"}`,
     `Heuristic signals: ${heuristicSignals.length ? heuristicSignals.join(", ") : "(none)"}`,
     ``,
     `Return JSON only.`,
@@ -98,7 +103,7 @@ function tryParseDecision(raw: string): ClassifyDecision | null {
   try {
     const obj = JSON.parse(m[0]) as { scope?: string; target?: string; reason?: string };
     if (!obj.scope) return null;
-    const valid: NoteScope[] = ["global", "symbol", "file", "feature"];
+    const valid: NoteScope[] = ["global", "symbol", "file", "feature", "area"];
     if (!valid.includes(obj.scope as NoteScope)) return null;
     return {
       scope: obj.scope as NoteScope,

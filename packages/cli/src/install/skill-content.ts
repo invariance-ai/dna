@@ -35,9 +35,13 @@ dna learn <symbol> --lesson "<…>"            # legacy: always symbol-scoped
 dna decide <symbol> --decision "<choice>" --rejected "<alternative>"
 \`\`\`
 
-\`dna lessons record\` returns the chosen scope and signals; if the scope looks wrong (e.g. it picked \`symbol\` for something repo-wide), call \`dna lessons reclassify <id> --to global\` to fix it. Global lessons land in the \`<!-- dna:global-lessons -->\` block of CLAUDE.md and are always loaded; scoped lessons live in \`.dna/notes/{symbol,file,feature}/\` and are auto-pulled when the prompt mentions the matching target.
+\`dna lessons record\` returns the chosen scope and signals; if the scope looks wrong (e.g. it picked \`symbol\` for something repo-wide), call \`dna lessons reclassify <id> --to global\` to fix it. Global lessons land in the \`<!-- dna:global-lessons -->\` block of CLAUDE.md and are always loaded; scoped lessons live in \`.dna/notes/{symbol,file,feature,area}/\` and are auto-pulled when the prompt mentions the matching target.
 
-**Tag the session early.** When you understand what the user is working on (e.g. "the homepage", "the auth flow"), call \`dna feature use <short-kebab-label>\` once. Use the exact label if the user names a known feature; otherwise pick a short kebab-case label. dna then learns which symbols belong to that feature and surfaces them automatically on future sessions that mention the same label.`;
+**Tag the session early.** When you understand what the user is working on (e.g. "the homepage", "the auth flow"), call \`dna feature use <short-kebab-label>\` once. Use the exact label if the user names a known feature; otherwise pick a short kebab-case label. dna then learns which symbols belong to that feature and surfaces them automatically on future sessions that mention the same label.
+
+**Location-scoped directives.** When the user gives an instruction tied to a *place* rather than a symbol — "don't do X here", "always Y in this folder", "in the home page, avoid Z" — call the MCP tool \`record_directive\` (or \`dna directive add "<text>"\`). dna resolves "here"/"this" to the active area (a directory) and stores it as an \`area\`-scoped note that resurfaces whenever you grep/read/edit files in that directory. The capture-directive hook also picks these up automatically from prompts, but calling \`record_directive\` yourself is more precise. Pass \`area\` or \`alias\` to target a specific location.
+
+**Aliases tie names to locations.** A human name like "home" can be bound to a directory and a linked feature with \`dna alias set home --file src/pages/home.tsx --feature homepage\` (dna also auto-learns this binding when you edit files after \`dna feature use\`). Once bound, mentioning "home" in a prompt surfaces that directory's directives *and* the linked feature's notes.`;
 
 /** Block appended to CLAUDE.md / AGENTS.md, bracketed by start/end markers. */
 export const AGENT_INSTRUCTIONS = `<!-- dna:start -->
