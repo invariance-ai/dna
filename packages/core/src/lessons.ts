@@ -5,19 +5,23 @@ import type {
   NoteSeverity,
   ClassifierMeta,
   LessonEntry,
+  AliasBinding,
 } from "@invariance/dna-schemas";
 import { readIndex, type DnaIndex } from "./index_store.js";
 import {
   loadFeatures,
   matchFeaturesInPrompt,
 } from "./features.js";
+import { matchAliasesInPrompt, resolveActiveArea, upsertAlias } from "./areas.js";
 import {
   appendNote,
   appendFileNote,
   appendFeatureNote,
+  appendAreaNote,
   loadAllNotes,
   loadAllFileNotes,
   loadAllFeatureNotes,
+  loadAllAreaNotes,
   removeNoteById,
 } from "./notes.js";
 import {
@@ -49,9 +53,19 @@ const FILEPATH_RE =
 
 const BACKTICK_RE = /`([^`\n]{1,80})`/g;
 
+/**
+ * Positional phrasing — a directive aimed at "here"/"this place". On its own
+ * it carries no target; the caller must supply the active area.
+ */
+const POSITIONAL_RE =
+  /\b(here|this file|this dir(?:ectory)?|this folder|this area|this page|this component|in here)\b/gi;
+
 export interface ClassifyContext {
   index?: DnaIndex;
   features?: Awaited<ReturnType<typeof loadFeatures>>;
+  aliases?: Record<string, AliasBinding>;
+  /** The directory "here"/"this" resolves to, supplied by the caller. */
+  activeArea?: string;
 }
 
 export interface ClassifyResult {
@@ -63,6 +77,7 @@ export interface ClassifyResult {
     symbols: string[];
     files: string[];
     features: string[];
+    areas: string[];
   };
   ambiguous: boolean;
 }
@@ -111,6 +126,23 @@ function extractFeatures(
 }
 
 /**
+ * Areas mentioned by alias name. Returns the resolved directories — an area
+ * target is always a directory path, never the alias name itself.
+ */
+function extractAreas(
+  text: string,
+  aliases?: Record<string, AliasBinding>,
+): string[] {
+  if (!aliases) return [];
+  const out: string[] = [];
+  for (const name of matchAliasesInPrompt(text, aliases)) {
+    const dir = aliases[name]?.dir;
+    if (dir && !out.includes(dir)) out.push(dir);
+  }
+  return out;
+}
+
+/**
  * Pure-heuristic classifier. Returns a proposed scope, confidence in [0,1],
  * and the signals that drove the decision. Callers may invoke an LLM
  * tie-breaker when confidence < 0.8 and ambiguous=true.
@@ -126,21 +158,53 @@ export function classifyHeuristic(
   const symbols = extractSymbols(lesson, ctx.index).filter((s) => !fileSet.has(s));
   const files = filesRaw;
   const features = extractFeatures(lesson, ctx.features);
+  const areas = extractAreas(lesson, ctx.aliases);
 
   const genericHits = lesson.match(GENERIC_QUANTIFIERS)?.length ?? 0;
   const policyHits = lesson.match(POLICY_VERBS)?.length ?? 0;
+  const positionalHits = lesson.match(POSITIONAL_RE)?.length ?? 0;
 
   const signals: string[] = [];
   if (symbols.length) signals.push(`symbols=${symbols.length}`);
   if (files.length) signals.push(`files=${files.length}`);
   if (features.length) signals.push(`features=${features.length}`);
+  if (areas.length) signals.push(`areas=${areas.length}`);
   if (genericHits) signals.push(`generic=${genericHits}`);
   if (policyHits) signals.push(`policy=${policyHits}`);
+  if (positionalHits) signals.push(`positional=${positionalHits}`);
 
   let scope: NoteScope = "global";
   let target: string | undefined;
   let confidence = 0.5;
   let ambiguous = false;
+
+  // Area shortcuts run first: a directive aimed at "here" must not be
+  // swallowed by the generic-quantifier global shortcut below.
+  if (positionalHits >= 1 && symbols.length === 0 && files.length === 0) {
+    if (ctx.activeArea) {
+      return {
+        scope: "area",
+        target: ctx.activeArea,
+        confidence: 0.85,
+        signals,
+        candidates: { symbols, files, features, areas },
+        ambiguous: false,
+      };
+    }
+    // Positional phrasing but no resolvable area — flag ambiguous and fall
+    // through to the existing table (degrades to global/file as before).
+    ambiguous = true;
+  }
+  if (areas.length === 1 && symbols.length === 0 && files.length === 0) {
+    return {
+      scope: "area",
+      target: areas[0],
+      confidence: 0.8,
+      signals,
+      candidates: { symbols, files, features, areas },
+      ambiguous: false,
+    };
+  }
 
   // Decision table — prefer narrowest scope that is supported by evidence.
   // Highest-priority shortcut: a generic-quantifier lesson with no symbol
@@ -156,7 +220,7 @@ export function classifyHeuristic(
       target,
       confidence,
       signals,
-      candidates: { symbols, files, features },
+      candidates: { symbols, files, features, areas },
       ambiguous: false,
     };
   }
@@ -205,7 +269,7 @@ export function classifyHeuristic(
     target,
     confidence,
     signals,
-    candidates: { symbols, files, features },
+    candidates: { symbols, files, features, areas },
     ambiguous,
   };
 }
@@ -214,11 +278,17 @@ export async function classifyLesson(
   root: string,
   lesson: string,
 ): Promise<ClassifyResult> {
-  const [index, features] = await Promise.all([
+  const [index, features, activeArea] = await Promise.all([
     readIndex(root).catch(() => undefined),
     loadFeatures(root).catch(() => undefined),
+    resolveActiveArea(root).catch(() => undefined),
   ]);
-  return classifyHeuristic(lesson, { index, features });
+  return classifyHeuristic(lesson, {
+    index,
+    features,
+    aliases: features?.aliases,
+    activeArea,
+  });
 }
 
 /* ----------------------- persistence ----------------------- */
@@ -334,6 +404,17 @@ export async function persistLesson(
     });
     return { id, scope: "feature", target, path: file };
   }
+  if (opts.scope === "area") {
+    const { file } = await appendAreaNote(root, {
+      id,
+      target,
+      lesson: opts.lesson,
+      evidence: opts.evidence,
+      severity: opts.severity,
+      classifier: opts.classifier,
+    });
+    return { id, scope: "area", target, path: file };
+  }
   throw new Error(`unhandled scope: ${opts.scope}`);
 }
 
@@ -439,7 +520,126 @@ export async function listLessons(
     }
   }
 
+  if (!filter?.scope || filter.scope === "area") {
+    const areas = await loadAllAreaNotes(root);
+    for (const { target, notes, path: p } of areas) {
+      if (filter?.target && target !== filter.target) continue;
+      for (const n of notes) {
+        out.push({
+          id: n.id ?? deriveLegacyId(target, n.lesson, n.recorded_at),
+          scope: "area",
+          target,
+          lesson: n.lesson,
+          severity: n.severity,
+          recorded_at: n.recorded_at,
+          path: p,
+        });
+      }
+    }
+  }
+
   return out;
+}
+
+/* ----------------------- directives (area-scoped) ----------------------- */
+
+const NEGATIVE_DIRECTIVE_RE =
+  /\b(don'?t|do not|never|avoid|stop|no longer|shouldn'?t|must not)\b/i;
+
+/** Heuristic do/avoid polarity from directive phrasing. */
+export function detectPolarity(text: string): "do" | "dont" {
+  return NEGATIVE_DIRECTIVE_RE.test(text) ? "dont" : "do";
+}
+
+export interface ExtractedDirective {
+  text: string;
+  polarity: "do" | "dont";
+}
+
+/**
+ * Pull location-scoped directives out of free-form prompt text. A directive is
+ * a sentence/clause that combines positional phrasing ("here", "this folder")
+ * with an instruction verb ("don't", "avoid", "always", "use"). Used by the
+ * capture-directive UserPromptSubmit hook.
+ */
+export function extractDirectives(prompt: string): ExtractedDirective[] {
+  if (!prompt) return [];
+  // Non-global copies — POSITIONAL_RE / POLICY_VERBS carry the `g` flag and
+  // `.test()` on a global regex is stateful.
+  const positional = new RegExp(POSITIONAL_RE.source, "i");
+  const policy = new RegExp(POLICY_VERBS.source, "i");
+  const out: ExtractedDirective[] = [];
+  const seen = new Set<string>();
+  for (const raw of prompt.split(/(?<=[.!?\n])\s+|;\s+/)) {
+    const s = raw.trim();
+    if (!s || s.length > 280) continue;
+    if (positional.test(s) && policy.test(s) && !seen.has(s)) {
+      seen.add(s);
+      out.push({ text: s, polarity: detectPolarity(s) });
+    }
+  }
+  return out;
+}
+
+export interface RecordDirectiveOpts {
+  directive: string;
+  polarity?: "do" | "dont";
+  /** Directory path or alias name. Defaults to the resolved active area. */
+  area?: string;
+  /** Bind/learn this human-friendly name for the area. */
+  alias?: string;
+  evidence?: string;
+  severity?: NoteSeverity;
+}
+
+export interface RecordDirectiveOutcome {
+  scope: "area";
+  area: string;
+  alias?: string;
+  id: string;
+  path: string;
+  polarity: "do" | "dont";
+}
+
+/**
+ * Persist a location-scoped directive. Resolves "here"/"this" to a concrete
+ * directory (the active area) when no explicit area is given, then writes an
+ * area-scoped note. Optionally binds a human-friendly alias to the area.
+ */
+export async function recordDirective(
+  root: string,
+  opts: RecordDirectiveOpts,
+): Promise<RecordDirectiveOutcome> {
+  const area = await resolveActiveArea(root, opts.area);
+  if (!area) {
+    throw new Error(
+      "could not resolve an area for this directive — pass `area` (a directory) or `alias`, or run `dna feature use <label>` first",
+    );
+  }
+  const polarity = opts.polarity ?? detectPolarity(opts.directive);
+  const persisted = await persistLesson(root, {
+    scope: "area",
+    target: area,
+    lesson: opts.directive,
+    evidence: opts.evidence,
+    severity: opts.severity ?? "medium",
+  });
+  let alias: string | undefined;
+  if (opts.alias && opts.alias.trim()) {
+    const bound = await upsertAlias(root, opts.alias, {
+      dir: area,
+      source: "user",
+    });
+    alias = bound.name;
+  }
+  return {
+    scope: "area",
+    area,
+    alias,
+    id: persisted.id,
+    path: persisted.path,
+    polarity,
+  };
 }
 
 function deriveLegacyId(target: string, lesson: string, at: string): string {
@@ -511,7 +711,9 @@ export async function reclassifyLesson(
         ? appendNote
         : opts.to_scope === "file"
           ? appendFileNote
-          : appendFeatureNote;
+          : opts.to_scope === "feature"
+            ? appendFeatureNote
+            : appendAreaNote;
     if (opts.to_scope === "symbol") {
       const { file } = await appendNote(root, {
         symbol: opts.to_target,

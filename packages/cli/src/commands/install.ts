@@ -220,6 +220,7 @@ function claudeSettings(cmd: string): unknown {
               type: "command",
               command:
                 `${cmd} capture-preference --root "$PWD" --emit 2>/dev/null || true; ` +
+                `${cmd} capture-directive --root "$PWD" --emit 2>/dev/null || true; ` +
                 `${cmd} context-from-prompt --root "$PWD" 2>/dev/null || true`,
             },
           ],
@@ -232,6 +233,15 @@ function claudeSettings(cmd: string): unknown {
             {
               type: "command",
               command: `${cmd} index --root "$PWD"${silent}`,
+            },
+          ],
+        },
+        {
+          matcher: "Grep|Glob|Read",
+          hooks: [
+            {
+              type: "command",
+              command: `${cmd} context-from-path --root "$PWD" 2>/dev/null || true`,
             },
           ],
         },

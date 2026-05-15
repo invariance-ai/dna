@@ -8,6 +8,7 @@ import {
   type FeaturesFile as FeaturesFileT,
 } from "@invariance/dna-schemas";
 import { readIndex, type DnaIndex } from "./index_store.js";
+import { bindAliasLocation } from "./areas.js";
 
 const FEATURES_REL = ".dna/features.yml";
 const ACTIVE_REL = ".dna/session/active-feature";
@@ -25,7 +26,7 @@ export async function loadFeatures(root: string): Promise<FeaturesFileT> {
     const data = parseYaml(raw);
     return FeaturesFile.parse(data);
   } catch {
-    return { version: 1, features: {} };
+    return { version: 1, features: {}, aliases: {} };
   }
 }
 
@@ -280,6 +281,9 @@ export async function attributeFiles(
 
   feature.symbols = Array.from(bySymbolId.values()).sort((a, b) => b.weight - a.weight);
   feature.last_active = now;
+  // Auto-learn alias locations from the edited files, piggy-backing on this
+  // save so we never do a second read-modify-write of features.yml.
+  bindAliasLocation(features, files, normalized);
   await saveFeatures(root, features);
 
   const result: AttributeResult = {

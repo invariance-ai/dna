@@ -3,11 +3,13 @@ import {
   loadNotes,
   loadFileNotes,
   loadFeatureNotes,
+  loadAreaNotes,
   loadInvariants,
   invariantsFor,
   readIndex,
   loadFeatures,
   matchFeaturesInPrompt,
+  matchAliasesInPrompt,
   readGlobalLessonsBody,
 } from "@invariance/dna-core";
 import type { SymbolRef } from "@invariance/dna-schemas";
@@ -112,8 +114,9 @@ export function registerContextFromPrompt(program: Command): void {
       return;
     }
 
+    // Symbol candidates may be empty (e.g. a plain-English prompt) — that's
+    // fine, file/feature/alias pulls below can still surface context.
     const candidates = extractCandidates(text).filter((c) => c.length >= opts.minLen);
-    if (candidates.length === 0) return;
 
     const matches = new Map<string, { sym: SymbolRef; score: number }>();
 
@@ -158,11 +161,17 @@ export function registerContextFromPrompt(program: Command): void {
     // lessons block so we never re-inject content the model already has.
     const filePaths = extractFilePaths(text, new Set(index.files)).slice(0, 3);
     const featureLabels: string[] = [];
+    let aliasMap: Awaited<ReturnType<typeof loadFeatures>>["aliases"] = {};
+    const aliasHits: string[] = [];
     try {
       const featuresFile = await loadFeatures(root);
       for (const label of matchFeaturesInPrompt(text, featuresFile.features)) {
         if (!featureLabels.includes(label)) featureLabels.push(label);
         if (featureLabels.length >= 2) break;
+      }
+      aliasMap = featuresFile.aliases ?? {};
+      for (const name of matchAliasesInPrompt(text, aliasMap).slice(0, 2)) {
+        aliasHits.push(name);
       }
     } catch {
       /* no features file */
@@ -174,7 +183,13 @@ export function registerContextFromPrompt(program: Command): void {
       return globalBody.includes(lesson.toLowerCase().slice(0, 80));
     };
 
-    if (matches.size === 0 && filePaths.length === 0 && featureLabels.length === 0) return;
+    if (
+      matches.size === 0 &&
+      filePaths.length === 0 &&
+      featureLabels.length === 0 &&
+      aliasHits.length === 0
+    )
+      return;
 
     const top = Array.from(matches.values())
       .sort((a, b) => b.score - a.score)
@@ -214,12 +229,53 @@ export function registerContextFromPrompt(program: Command): void {
       if (notes.length > 0) featureBlocks.push({ label: l, notes: notes.slice(0, 3) });
     }
 
-    if (blocks.length === 0 && fileBlocks.length === 0 && featureBlocks.length === 0) return;
+    // Alias/area pull: a human name like "home" mentioned in the prompt
+    // surfaces its area's directives — and, via the alias → feature link, the
+    // linked feature's notes too, even when the feature label wasn't named.
+    const aliasBlocks: Array<{
+      alias: string;
+      dir: string;
+      notes: Awaited<ReturnType<typeof loadAreaNotes>>;
+      feature?: string;
+      featureNotes: Awaited<ReturnType<typeof loadFeatureNotes>>;
+    }> = [];
+    {
+      const seenDirs = new Set<string>();
+      for (const name of aliasHits) {
+        const alias = aliasMap?.[name];
+        if (!alias?.dir || seenDirs.has(alias.dir)) continue;
+        seenDirs.add(alias.dir);
+        const notes = (await loadAreaNotes(root, alias.dir).catch(() => [])).filter(
+          (n) => !dedupSkip(n.lesson),
+        );
+        const featureNotes = alias.feature
+          ? (await loadFeatureNotes(root, alias.feature).catch(() => [])).filter(
+              (n) => !dedupSkip(n.lesson),
+            )
+          : [];
+        if (notes.length === 0 && featureNotes.length === 0) continue;
+        aliasBlocks.push({
+          alias: name,
+          dir: alias.dir,
+          notes: notes.slice(0, 5),
+          feature: alias.feature,
+          featureNotes: featureNotes.slice(0, 3),
+        });
+      }
+    }
+
+    if (
+      blocks.length === 0 &&
+      fileBlocks.length === 0 &&
+      featureBlocks.length === 0 &&
+      aliasBlocks.length === 0
+    )
+      return;
 
     if (opts.json) {
       console.log(
         JSON.stringify(
-          { matches: blocks, files: fileBlocks, features: featureBlocks },
+          { matches: blocks, files: fileBlocks, features: featureBlocks, areas: aliasBlocks },
           null,
           2,
         ),
@@ -268,6 +324,24 @@ export function registerContextFromPrompt(program: Command): void {
       lines.push("**Notes from prior work in this feature:**");
       for (const n of fb.notes) {
         lines.push(`- [${n.severity ?? "info"}] ${n.lesson}`);
+      }
+      lines.push("");
+    }
+    for (const ab of aliasBlocks) {
+      lines.push(`### area: \`${ab.dir}\` (alias: ${ab.alias})`);
+      if (ab.notes.length > 0) {
+        lines.push("");
+        lines.push("**Directives for this location:**");
+        for (const n of ab.notes) {
+          lines.push(`- [${n.severity ?? "info"}] ${n.lesson}`);
+        }
+      }
+      if (ab.feature && ab.featureNotes.length > 0) {
+        lines.push("");
+        lines.push(`**Linked feature \`${ab.feature}\`:**`);
+        for (const n of ab.featureNotes) {
+          lines.push(`- [${n.severity ?? "info"}] ${n.lesson}`);
+        }
       }
       lines.push("");
     }

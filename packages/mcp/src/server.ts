@@ -27,6 +27,7 @@ import {
   persistLesson,
   listLessons,
   reclassifyLesson,
+  recordDirective,
   listTodos,
   resolveTodo,
   gate,
@@ -153,9 +154,9 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         lesson: string;
         evidence?: string;
         severity?: "low" | "medium" | "high";
-        hint_scope?: "global" | "symbol" | "file" | "feature";
+        hint_scope?: "global" | "symbol" | "file" | "feature" | "area";
         hint_target?: string;
-        force_scope?: "global" | "symbol" | "file" | "feature";
+        force_scope?: "global" | "symbol" | "file" | "feature" | "area";
         force_target?: string;
         dry_run?: boolean;
         no_llm?: boolean;
@@ -223,17 +224,31 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       };
     }
     case "lessons_list": {
-      const a = args as { scope?: "global" | "symbol" | "file" | "feature"; target?: string };
+      const a = args as {
+        scope?: "global" | "symbol" | "file" | "feature" | "area";
+        target?: string;
+      };
       const lessons = await listLessons(root, a);
       return { lessons };
     }
     case "reclassify_lesson": {
       const a = args as {
         id: string;
-        to_scope: "global" | "symbol" | "file" | "feature";
+        to_scope: "global" | "symbol" | "file" | "feature" | "area";
         to_target?: string;
       };
       return reclassifyLesson(root, a);
+    }
+    case "record_directive": {
+      const a = args as {
+        directive: string;
+        polarity?: "do" | "dont";
+        area?: string;
+        alias?: string;
+        evidence?: string;
+        severity?: "low" | "medium" | "high";
+      };
+      return recordDirective(root, a);
     }
     case "find_reusable": {
       const a = args as { query: string; kind?: string; limit?: number };

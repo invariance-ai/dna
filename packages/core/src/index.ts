@@ -13,6 +13,7 @@ export * from "./gh.js";
 export * from "./promote.js";
 export * from "./preferences.js";
 export * from "./features.js";
+export * from "./areas.js";
 export * from "./questions.js";
 export * from "./budget.js";
 export * from "./time.js";

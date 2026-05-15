@@ -11,6 +11,7 @@ import {
 const DIR = ".dna/notes";
 const FILE_DIR = ".dna/notes/file";
 const FEATURE_DIR = ".dna/notes/feature";
+const AREA_DIR = ".dna/notes/area";
 
 function fileFor(root: string, symbol: string): string {
   // Symbols can contain `.` (Stripe.refunds.create) or `/` (path/to/sym).
@@ -19,7 +20,7 @@ function fileFor(root: string, symbol: string): string {
   return path.join(root, DIR, `${safe}.yml`);
 }
 
-function slugifyPath(p: string): string {
+export function slugifyPath(p: string): string {
   return p.replace(/^\.\//, "").replace(/[/\\]/g, "__").replace(/\./g, "_");
 }
 
@@ -30,6 +31,10 @@ function fileNotePath(root: string, file: string): string {
 function featureNotePath(root: string, label: string): string {
   // labels are kebab-case already; lowercase to be safe
   return path.join(root, FEATURE_DIR, `${label.toLowerCase()}.yml`);
+}
+
+function areaNotePath(root: string, dir: string): string {
+  return path.join(root, AREA_DIR, `${slugifyPath(dir)}.yml`);
 }
 
 export async function loadNotes(root: string, symbol: string): Promise<NoteT[]> {
@@ -167,6 +172,42 @@ export async function appendFeatureNote(
   return { note, file: path.relative(root, out) };
 }
 
+export async function loadAreaNotes(root: string, dir: string): Promise<NoteT[]> {
+  try {
+    const raw = await readFile(areaNotePath(root, dir), "utf8");
+    const data = parseYaml(raw);
+    if (!Array.isArray(data)) return [];
+    return data.map((d: unknown) => Note.parse(d));
+  } catch {
+    return [];
+  }
+}
+
+export async function appendAreaNote(
+  root: string,
+  opts: AppendScopedOpts,
+): Promise<{ note: NoteT; file: string }> {
+  const note: NoteT = Note.parse({
+    symbol: opts.target,
+    lesson: opts.lesson,
+    evidence: opts.evidence,
+    severity: opts.severity ?? "medium",
+    promoted: false,
+    recorded_at: new Date().toISOString(),
+    source: opts.source ?? "agent",
+    id: opts.id,
+    scope: "area",
+    applies_to: opts.target,
+    classifier: opts.classifier,
+  });
+  const out = areaNotePath(root, opts.target);
+  await mkdir(path.dirname(out), { recursive: true });
+  const existing = await loadAreaNotes(root, opts.target);
+  const next = [...existing, note];
+  await writeFile(out, stringifyYaml(next));
+  return { note, file: path.relative(root, out) };
+}
+
 /**
  * Walk a notes dir, returning [target, notes] pairs. Used by lessons listers.
  */
@@ -218,6 +259,14 @@ export async function loadAllFeatureNotes(
   return loadScopedDir(root, FEATURE_DIR, (slug) => slug);
 }
 
+export async function loadAllAreaNotes(
+  root: string,
+): Promise<Array<{ target: string; notes: NoteT[]; path: string }>> {
+  return loadScopedDir(root, AREA_DIR, (slug) =>
+    slug.replace(/__/g, "/").replace(/_/g, "."),
+  );
+}
+
 export async function removeNoteById(
   root: string,
   id: string,
@@ -245,6 +294,12 @@ export async function removeNoteById(
       loader: loadFeatureNotes,
       pathFor: featureNotePath,
       unslug: (s) => s,
+    },
+    {
+      dirRel: AREA_DIR,
+      loader: loadAreaNotes,
+      pathFor: areaNotePath,
+      unslug: (s) => s.replace(/__/g, "/").replace(/_/g, "."),
     },
   ];
   for (const { dirRel, loader, pathFor, unslug } of checks) {
@@ -291,7 +346,7 @@ export async function updateNoteById(
   id: string,
   patch: Partial<NoteT>,
 ): Promise<{ note: NoteT; path: string } | null> {
-  const dirs = [DIR, FILE_DIR, FEATURE_DIR];
+  const dirs = [DIR, FILE_DIR, FEATURE_DIR, AREA_DIR];
   for (const dirRel of dirs) {
     try {
       const dir = path.join(root, dirRel);
