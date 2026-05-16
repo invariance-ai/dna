@@ -8,18 +8,19 @@ import { loadInvariants } from "./invariants.js";
  * Walk knowledge entries (notes, decisions, invariants) and flag the ones
  * that have drifted from the source they describe:
  *
- *   missing_anchor   — the symbol the entry points at no longer exists.
- *                      Includes a `suggested_anchor` if a near-match was found.
- *   expired          — entry past its `expires_at` date.
- *   no_anchor_id     — entry has no anchor_id (pre-v0.2 entry, or was authored
- *                      against a symbol that wasn't in the index at the time).
+ *   missing_anchor      — the symbol the entry points at no longer exists.
+ *                         Includes a `suggested_anchor` if a near-match was found.
+ *   expired             — entry past its `expires_at` date.
+ *   invalid_expires_at  — entry's `expires_at` is not a parseable ISO date.
+ *   no_anchor_id        — entry has no anchor_id (pre-v0.2 entry, or was authored
+ *                         against a symbol that wasn't in the index at the time).
  *
  * Duplicate + contradiction detection are intentionally out of scope for
  * this first pass — they require deeper text analysis and are best authored
  * once anchor health is solid.
  */
 export interface KnowledgeIssue {
-  kind: "missing_anchor" | "expired" | "no_anchor_id";
+  kind: "missing_anchor" | "expired" | "no_anchor_id" | "invalid_expires_at";
   source: "note" | "decision" | "invariant";
   entry: {
     /** Symbol field (legacy / human-readable label). */
@@ -38,9 +39,16 @@ export interface ValidateKnowledgeReport {
   issues: KnowledgeIssue[];
 }
 
+export interface ValidateKnowledgeOptions {
+  /** Suppress `no_anchor_id` findings (for legacy entries). */
+  legacyOk?: boolean;
+}
+
 export async function validateKnowledge(
   root: string,
+  options: ValidateKnowledgeOptions = {},
 ): Promise<ValidateKnowledgeReport> {
+  const { legacyOk = false } = options;
   let symbols: SymbolRef[] = [];
   try {
     const idx = await readIndex(root);
@@ -69,20 +77,45 @@ export async function validateKnowledge(
   const issues: KnowledgeIssue[] = [];
   const now = Date.now();
 
+  function checkExpiry(
+    expiresAt: string | undefined,
+    source: KnowledgeIssue["source"],
+    entry: KnowledgeIssue["entry"],
+  ): "expired" | "invalid" | "ok" {
+    if (!expiresAt) return "ok";
+    const d = new Date(expiresAt);
+    const t = d.getTime();
+    if (isNaN(t)) {
+      issues.push({ kind: "invalid_expires_at", source, entry });
+      return "invalid";
+    }
+    if (t < now) {
+      issues.push({ kind: "expired", source, entry });
+      return "expired";
+    }
+    return "ok";
+  }
+
   for (const n of notes) {
     const summary = (n.lesson ?? "").slice(0, 80);
-    if (n.expires_at && new Date(n.expires_at).getTime() < now) {
-      issues.push({ kind: "expired", source: "note", entry: { symbol: n.symbol, anchor_id: n.anchor_id, summary } });
-      continue;
-    }
-    if (n.anchor_id && !idSet.has(n.anchor_id)) {
-      issues.push({
-        kind: "missing_anchor",
-        source: "note",
-        entry: { symbol: n.symbol, anchor_id: n.anchor_id, summary },
-        suggested_anchor: suggestAnchor(n.symbol, byName),
-      });
-    } else if (!n.anchor_id) {
+    const entry = { symbol: n.symbol, anchor_id: n.anchor_id, summary };
+    const exp = checkExpiry(n.expires_at, "note", entry);
+    if (exp !== "ok") continue;
+    if (n.anchor_id) {
+      // Stable-id anchored entries: live if the id is in the index OR the
+      // legacy name still resolves (covers cases where the id changed format
+      // but the symbol survives by name).
+      const idHit = idSet.has(n.anchor_id);
+      const nameHit = n.symbol ? byName.has(n.symbol) : false;
+      if (!idHit && !nameHit) {
+        issues.push({
+          kind: "missing_anchor",
+          source: "note",
+          entry,
+          suggested_anchor: suggestAnchor(n.symbol, byName),
+        });
+      }
+    } else {
       // No stable anchor — fall back to name lookup; flag only if name has zero matches.
       if (n.symbol && !byName.has(n.symbol)) {
         issues.push({
@@ -91,7 +124,7 @@ export async function validateKnowledge(
           entry: { symbol: n.symbol, summary },
           suggested_anchor: suggestAnchor(n.symbol, byName),
         });
-      } else if (n.symbol && symbols.length > 0) {
+      } else if (n.symbol && symbols.length > 0 && !legacyOk) {
         // entry's anchor is intact but using legacy format
         issues.push({ kind: "no_anchor_id", source: "note", entry: { symbol: n.symbol, summary } });
       }
@@ -100,24 +133,29 @@ export async function validateKnowledge(
 
   for (const d of decisions) {
     const summary = (d.decision ?? "").slice(0, 80);
-    if (d.expires_at && new Date(d.expires_at).getTime() < now) {
-      issues.push({ kind: "expired", source: "decision", entry: { symbol: d.symbol, anchor_id: d.anchor_id, summary } });
-      continue;
-    }
-    if (d.anchor_id && !idSet.has(d.anchor_id)) {
-      issues.push({
-        kind: "missing_anchor",
-        source: "decision",
-        entry: { symbol: d.symbol, anchor_id: d.anchor_id, summary },
-        suggested_anchor: suggestAnchor(d.symbol, byName),
-      });
-    } else if (!d.anchor_id && d.symbol && !byName.has(d.symbol)) {
+    const entry = { symbol: d.symbol, anchor_id: d.anchor_id, summary };
+    const exp = checkExpiry(d.expires_at, "decision", entry);
+    if (exp !== "ok") continue;
+    if (d.anchor_id) {
+      const idHit = idSet.has(d.anchor_id);
+      const nameHit = d.symbol ? byName.has(d.symbol) : false;
+      if (!idHit && !nameHit) {
+        issues.push({
+          kind: "missing_anchor",
+          source: "decision",
+          entry,
+          suggested_anchor: suggestAnchor(d.symbol, byName),
+        });
+      }
+    } else if (d.symbol && !byName.has(d.symbol)) {
       issues.push({
         kind: "missing_anchor",
         source: "decision",
         entry: { symbol: d.symbol, summary },
         suggested_anchor: suggestAnchor(d.symbol, byName),
       });
+    } else if (!d.anchor_id && d.symbol && symbols.length > 0 && !legacyOk) {
+      issues.push({ kind: "no_anchor_id", source: "decision", entry: { symbol: d.symbol, summary } });
     }
   }
 
@@ -143,24 +181,55 @@ export async function validateKnowledge(
   };
 }
 
+/**
+ * Levenshtein distance — small inline impl, no dep.
+ */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const m = a.length;
+  const n = b.length;
+  let prev = new Array<number>(n + 1);
+  let curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1]! + 1,
+        prev[j]! + 1,
+        prev[j - 1]! + cost,
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n]!;
+}
+
 function suggestAnchor(
   needle: string | undefined,
   byName: Map<string, SymbolRef[]>,
 ): KnowledgeIssue["suggested_anchor"] {
   if (!needle) return undefined;
-  // Cheap fuzzy: case-insensitive substring + length-ratio scoring.
   const needleLow = needle.toLowerCase();
   let best: { sym: SymbolRef; score: number } | undefined;
   for (const [name, syms] of byName) {
     const low = name.toLowerCase();
     let score = 0;
-    if (low === needleLow) score = 100;
-    else if (low.includes(needleLow) || needleLow.includes(low)) {
-      const overlap = Math.min(low.length, needleLow.length);
-      const max = Math.max(low.length, needleLow.length);
-      score = Math.round((overlap / max) * 80);
+    if (low === needleLow) {
+      score = 100;
+    } else {
+      // Reject very short candidates unless identical — avoids
+      // "create" being suggested for "createRefund".
+      if (low.length < 4 || needleLow.length < 4) continue;
+      const dist = levenshtein(low, needleLow);
+      const maxLen = Math.max(low.length, needleLow.length);
+      const sim = 1 - dist / maxLen;
+      if (sim < 0.6) continue;
+      score = Math.round(sim * 100);
     }
-    if (score < 40) continue;
     const sym = syms[0]!;
     if (!best || score > best.score) best = { sym, score };
   }

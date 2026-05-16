@@ -5,6 +5,7 @@ import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 interface Opts extends RootOption {
   json?: boolean;
+  legacyOk?: boolean;
 }
 
 export function registerValidateKnowledge(program: Command): void {
@@ -12,10 +13,11 @@ export function registerValidateKnowledge(program: Command): void {
     program
       .command("validate-knowledge")
       .description("Flag notes/decisions/invariants whose anchor symbols moved, vanished, or expired")
-      .option("--json", "Emit JSON"),
+      .option("--json", "Emit JSON")
+      .option("--legacy-ok", "Suppress no_anchor_id findings for legacy entries"),
   ).action(async (opts: Opts) => {
     const root = resolveRoot(opts);
-    const report = await validateKnowledge(root);
+    const report = await validateKnowledge(root, { legacyOk: opts.legacyOk });
 
     if (opts.json) {
       console.log(JSON.stringify(report, null, 2));
@@ -34,9 +36,10 @@ export function registerValidateKnowledge(program: Command): void {
     }
     for (const i of report.issues) {
       const tag =
-        i.kind === "expired"        ? kleur.yellow("EXPIRED      ") :
-        i.kind === "missing_anchor" ? kleur.red("MISSING ANCHOR") :
-                                       kleur.dim("NO ANCHOR ID  ");
+        i.kind === "expired"            ? kleur.yellow("EXPIRED       ") :
+        i.kind === "invalid_expires_at" ? kleur.yellow("BAD EXPIRES_AT") :
+        i.kind === "missing_anchor"     ? kleur.red("MISSING ANCHOR") :
+                                          kleur.dim("NO ANCHOR ID  ");
       console.log(`  ${tag}  ${kleur.cyan(i.source)}  ${i.entry.symbol ?? "(no symbol)"} — ${kleur.dim(i.entry.summary)}`);
       if (i.suggested_anchor) {
         console.log(
