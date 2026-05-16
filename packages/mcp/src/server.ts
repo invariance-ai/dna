@@ -55,6 +55,9 @@ import {
   verifyIndex,
   readGateStream,
   gateChanged,
+  inferSymbols,
+  seed,
+  ALL_SOURCE_GLOBS,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -105,8 +108,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
   const root = process.cwd();
   switch (name) {
-    case "prepare_edit":
-      return prepareEdit(args as Parameters<typeof prepareEdit>[0], root);
+    case "prepare_edit": {
+      const a = args as { symbol?: string; intent: string; budget?: number; since?: string; depth?: number };
+      let symbol = a.symbol;
+      let candidates: Array<{ symbol: string; score: number; via: string }> | undefined;
+      let lowConfidence = false;
+      if (!symbol && a.intent) {
+        const matches = await inferSymbols(root, a.intent, { limit: 5 });
+        if (matches.length === 0) {
+          throw new Error(`prepare_edit: no symbol matches for intent "${a.intent}"; pass an explicit symbol`);
+        }
+        candidates = matches.map((m) => ({
+          symbol: m.symbol.qualified_name ?? m.symbol.name,
+          score: m.score,
+          via: m.via,
+        }));
+        symbol = candidates[0]!.symbol;
+        const LOW_CONFIDENCE_THRESHOLD = 70;
+        lowConfidence = candidates.length === 1 && (candidates[0]!.score ?? 0) < LOW_CONFIDENCE_THRESHOLD;
+      }
+      if (!symbol) throw new Error("prepare_edit: symbol or intent required");
+      const result = await prepareEdit({ symbol, intent: a.intent, budget: a.budget, since: a.since, depth: a.depth }, root);
+      const withCandidates = candidates && candidates.length > 1 ? { ...result, candidates } : result;
+      return lowConfidence ? { ...withCandidates, low_confidence: true } : withCandidates;
+    }
     case "get_context":
       return getContext(args as Parameters<typeof getContext>[0], root);
     case "impact_of":
@@ -428,6 +453,25 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
     case "review_diff": {
       const a = args as { base?: string };
       return gateChanged(root, { base: a.base });
+    }
+    case "seed_propose": {
+      const a = args as { tier?: "safe" | "medium" | "aggressive"; limit?: number };
+      const tier = a.tier ?? "safe";
+      const cfg = tier === "safe"
+        ? { maxCommits: 0, maxPrs: 0, minConfidence: 0.6, sources: ["todo"] }
+        : tier === "medium"
+        ? { maxCommits: 100, maxPrs: 20, minConfidence: 0.4, sources: ["todo", "commit", "pr"] }
+        : { maxCommits: 500, maxPrs: 100, minConfidence: 0.2, sources: ["todo", "commit", "pr", "blame"] };
+      const r = await seed(root, {
+        maxCommits: cfg.maxCommits,
+        maxPrs: cfg.maxPrs,
+        scanFiles: ALL_SOURCE_GLOBS,
+      });
+      let proposals = r.proposals.filter(
+        (p) => (p.confidence ?? 0) >= cfg.minConfidence && cfg.sources.includes(p.source),
+      );
+      if (a.limit) proposals = proposals.slice(0, a.limit);
+      return { tier, proposals, scanned: r.scanned };
     }
     default:
       throw new Error(`Tool ${name} dispatch not implemented`);
