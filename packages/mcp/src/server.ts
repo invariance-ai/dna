@@ -51,6 +51,8 @@ import {
   verifyContract,
   findRejectedConflicts,
   findPromotionCandidates,
+  readIndex,
+  verifyIndex,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -410,6 +412,11 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
         a.threshold,
       );
       return { candidates };
+    }
+    case "verify_index": {
+      const a = args as { sample?: number };
+      const index = await readIndex(root);
+      return verifyIndex(index, { root, sample: a.sample });
     }
     default:
       throw new Error(`Tool ${name} dispatch not implemented`);

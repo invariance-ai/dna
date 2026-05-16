@@ -921,6 +921,33 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- verify_index (P0c) ---------- */
+
+export const VerifyIndexInput = z.object({
+  sample: z.number().int().positive().optional(),
+});
+export type VerifyIndexInput = z.infer<typeof VerifyIndexInput>;
+
+export const VerifyIndexWorst = z.object({
+  from_file: z.string(),
+  from_line: z.number().int().nonnegative(),
+  callee: z.string(),
+  dna_resolved_to: z.string().optional(),
+  ts_resolved_to: z.string().optional(),
+  issue: z.enum(["wrong_target", "ts_says_no_target", "dna_missed"]),
+});
+
+export const VerifyIndexResult = z.object({
+  language: z.enum(["typescript"]),
+  sample_size: z.number().int().nonnegative(),
+  total_edges: z.number().int().nonnegative(),
+  precision: z.number().min(0).max(1),
+  recall: z.number().min(0).max(1),
+  coverage: z.number().min(0).max(1),
+  worst: z.array(VerifyIndexWorst),
+});
+export type VerifyIndexResult = z.infer<typeof VerifyIndexResult>;
+
 /**
  * Tool catalogue — referenced by CLI command registration and MCP server
  * registration so the surfaces cannot drift.
@@ -1132,6 +1159,12 @@ export const TOOLS = {
       "Rule-based clustering of un-promoted notes on a symbol; clusters with ≥ min_occurrences and overlap ≥ threshold are candidates for promotion to invariants. Use as the authoring queue for the team's rules layer.",
     input: PromotionCandidatesInput,
     output: PromotionCandidatesResult,
+  },
+  verify_index: {
+    description:
+      "Score DNA's symbol graph against TypeScript's type checker. Returns precision (DNA edges ts confirms), recall (ts edges DNA found), coverage (% of edges with exact|typed status), and a list of worst-offending callsites. Use this to prove DNA's affected-symbols claims are trustworthy on a given repo, or to find graph-quality regressions after a parser change.",
+    input: VerifyIndexInput,
+    output: VerifyIndexResult,
   },
 } as const;
 

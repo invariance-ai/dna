@@ -313,17 +313,20 @@ function walkJsTs(
   } else if (t === "call_expression") {
     const fn = node.childForFieldName("function");
     if (fn) {
-      let callee: string | undefined;
-      if (fn.type === "identifier") callee = fn.text;
-      else if (fn.type === "member_expression") {
-        callee = fn.childForFieldName("property")?.text;
-      }
-      if (callee && callee !== enclosing) {
-        call_sites.push({
-          callee_name: callee,
-          line: node.startPosition.row + 1,
-          from: enclosing,
-        });
+      // Only track bare-identifier calls (`foo()`). Member calls (`x.foo()`)
+      // can't be resolved from name alone without type info and produce
+      // massive false-positive rates (every `.push()` matching a local
+      // `function push()`). Method calls are picked up when the receiver's
+      // class is in scope via the dedicated method walker.
+      if (fn.type === "identifier") {
+        const callee = fn.text;
+        if (callee && callee !== enclosing) {
+          call_sites.push({
+            callee_name: callee,
+            line: node.startPosition.row + 1,
+            from: enclosing,
+          });
+        }
       }
     }
   }
@@ -379,12 +382,8 @@ function walkPython(
     }
   } else if (t === "call") {
     const fn = node.childForFieldName("function");
-    if (fn) {
-      let callee: string | undefined;
-      if (fn.type === "identifier") callee = fn.text;
-      else if (fn.type === "attribute") {
-        callee = fn.childForFieldName("attribute")?.text;
-      }
+    if (fn && fn.type === "identifier") {
+      const callee = fn.text;
       if (callee && callee !== enclosing) {
         call_sites.push({
           callee_name: callee,
@@ -393,6 +392,7 @@ function walkPython(
         });
       }
     }
+    // attribute calls (`self.bar()`, `obj.foo()`) skipped — see TS walker.
   }
 
   for (const c of node.children) {
