@@ -1,0 +1,10 @@
+{
+  "task_id": "003-rename-symbol",
+  "arm": "baseline",
+  "attempt": 1,
+  "passed": true,
+  "failed_checks": [],
+  "duration_sec": 31.636,
+  "output_chars": 509,
+  "timed_out": false
+}
