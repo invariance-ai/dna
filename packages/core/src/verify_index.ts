@@ -15,14 +15,15 @@ function realRel(root: string, abs: string): string {
  * tsserver resolves workspace package imports to the built dist/.d.ts file
  * (whatever `main`/`types` points at). DNA tracks source files. Normalize
  * both ends so monorepos don't all look "wrong" when they're actually right.
+ *
+ * Strip every JS/TS extension we might encounter (incl. .d.ts, .mjs, .cjs,
+ * .jsx) so file:name comparisons match regardless of how either side wrote it.
  */
 function normalizeTarget(p: string): string {
   // packages/<x>/dist/foo.d.ts → packages/<x>/src/foo
   return p
     .replace(/\/dist\//, "/src/")
-    .replace(/\.d\.ts:/, ":")
-    .replace(/\.ts:/, ":")
-    .replace(/\.tsx:/, ":");
+    .replace(/\.(d\.)?(ts|tsx|js|jsx|mjs|cjs):/, ":");
 }
 
 /**
@@ -34,19 +35,31 @@ function normalizeTarget(p: string): string {
  * about but DNA may have missed (recall).
  *
  * Three numbers ship in the report:
- *   precision = (DNA edges ts confirms) / (sampled DNA edges)
+ *   precision = confirmed / (confirmed + contradicted)   (inconclusive excluded)
  *   recall    = (ts edges DNA has) / (sampled ts edges)
  *   coverage  = (DNA edges with status ∈ {exact, typed}) / (total DNA edges)
  *
  * Python is intentionally out of scope here — pyright shell-out lives in
  * a separate verify_index_py module when we add it.
  */
+export interface WilsonCI {
+  low: number;
+  high: number;
+}
+
 export interface VerifyReport {
   language: "typescript";
   sample_size: number;
   total_edges: number;
   precision: number;
+  precision_ci: WilsonCI;
+  precision_confirmed: number;
+  precision_contradicted: number;
+  precision_inconclusive: number;
   recall: number;
+  recall_ci: WilsonCI;
+  recall_seen: number;
+  recall_hit: number;
   coverage: number;
   worst: Array<{
     from_file: string;
@@ -62,15 +75,54 @@ export interface VerifyOptions {
   root: string;
   sample?: number;
   /** Cap concurrent ts programs. The whole program is built once. */
+  seed?: number;
 }
 
-const DEFAULT_SAMPLE = 50;
+const DEFAULT_SAMPLE = 200;
+
+/** mulberry32 — deterministic 32-bit PRNG so seeded runs reproduce. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function (): number {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function resolveSeed(opt?: number): number | undefined {
+  if (opt !== undefined && Number.isFinite(opt)) return Math.trunc(opt);
+  const env = process.env.DNA_VERIFY_SEED;
+  if (env && env.trim() !== "") {
+    const n = Number(env);
+    if (Number.isFinite(n)) return Math.trunc(n);
+  }
+  return undefined;
+}
+
+/** Wilson score interval at 95% confidence. */
+function wilson(hits: number, n: number): WilsonCI {
+  if (n === 0) return { low: 0, high: 1 };
+  const z = 1.96;
+  const p = hits / n;
+  const denom = 1 + (z * z) / n;
+  const centre = p + (z * z) / (2 * n);
+  const margin = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return {
+    low: Math.max(0, (centre - margin) / denom),
+    high: Math.min(1, (centre + margin) / denom),
+  };
+}
 
 export async function verifyIndex(
   index: DnaIndex,
   opts: VerifyOptions,
 ): Promise<VerifyReport> {
   const { root, sample = DEFAULT_SAMPLE } = opts;
+  const seed = resolveSeed(opts.seed);
+  const rand: () => number = seed !== undefined ? mulberry32(seed) : Math.random;
 
   // Build a ts Program over the TS files DNA indexed.
   const tsFiles = index.files
@@ -82,7 +134,14 @@ export async function verifyIndex(
       sample_size: 0,
       total_edges: index.edges.length,
       precision: 1,
+      precision_ci: { low: 0, high: 1 },
+      precision_confirmed: 0,
+      precision_contradicted: 0,
+      precision_inconclusive: 0,
       recall: 1,
+      recall_ci: { low: 0, high: 1 },
+      recall_seen: 0,
+      recall_hit: 0,
       coverage: coverageOf(index),
       worst: [],
     };
@@ -119,18 +178,23 @@ export async function verifyIndex(
   const tsEdges = index.edges.filter(
     (e) => e.file && (e.file.endsWith(".ts") || e.file.endsWith(".tsx") || e.file.endsWith(".js") || e.file.endsWith(".jsx")),
   );
-  const sampleEdges = pickRandom(tsEdges, sample);
+  const sampleEdges = pickRandom(tsEdges, sample, rand);
   const worst: VerifyReport["worst"] = [];
-  let precisionHits = 0;
+  let confirmed = 0;
+  let contradicted = 0;
+  let inconclusive = 0;
   for (const edge of sampleEdges) {
     const absFile = path.resolve(root, edge.file!);
     const sf = lineCache.get(absFile);
-    if (!sf) continue;
+    if (!sf) {
+      inconclusive++;
+      continue;
+    }
     const callee = lastNameOf(edge.to);
     const callExpr = findCallAt(sf, edge.line ?? 1, callee);
     if (!callExpr) {
-      // ts can't even find it — be lenient
-      precisionHits++;
+      // ts can't even find the call site — neither confirm nor contradict.
+      inconclusive++;
       continue;
     }
     const sym = aliasedTarget(checker, checker.getSymbolAtLocation(callExpr.expression));
@@ -139,6 +203,8 @@ export async function verifyIndex(
     const tsTarget = declFile && declName ? `${realRel(root, declFile)}:${declName}` : undefined;
     const dnaTarget = `${guessTargetFile(index, edge)}:${callee}`;
     if (!tsTarget) {
+      // ts found the call but couldn't resolve a target — can't judge DNA.
+      inconclusive++;
       worst.push({
         from_file: edge.file!,
         from_line: edge.line ?? 0,
@@ -150,8 +216,9 @@ export async function verifyIndex(
     }
     // Match by file path + name (after dist/src normalization).
     if (normalizeTarget(tsTarget) === normalizeTarget(dnaTarget)) {
-      precisionHits++;
+      confirmed++;
     } else {
+      contradicted++;
       worst.push({
         from_file: edge.file!,
         from_line: edge.line ?? 0,
@@ -163,50 +230,67 @@ export async function verifyIndex(
     }
   }
 
-  // --- Recall pass: walk a random sample of source files, count calls ts
-  //     sees, and check whether DNA has any matching edge.
-  const fileSample = pickRandom(tsFiles, Math.min(sample, tsFiles.length));
-  let recallSeen = 0;
-  let recallHit = 0;
-  for (const f of fileSample) {
+  // --- Recall pass: enumerate ALL callsites ts can find across the project,
+  //     then sample from that flat list. Same shape as the DNA-edges side,
+  //     which keeps per-file density bias out of the recall denominator.
+  interface RecallSite {
+    file: string;
+    line: number;
+    callee: string;
+  }
+  const allSites: RecallSite[] = [];
+  for (const f of tsFiles) {
     const sf = lineCache.get(f);
     if (!sf) continue;
     const relFile = path.relative(root, f);
     visitCalls(sf, (callExpr, line) => {
-      const callee = nameOfCallExpression(callExpr);
-      if (!callee) return;
       // Skip method calls — DNA's parser intentionally doesn't track them.
       if (ts.isPropertyAccessExpression(callExpr.expression)) return;
+      const callee = nameOfCallExpression(callExpr);
+      if (!callee) return;
       // Skip externals — recall should measure project edges, not lib.es5.d.ts.
       const sym = aliasedTarget(checker, checker.getSymbolAtLocation(callExpr.expression));
       const declFile = sym?.declarations?.[0]?.getSourceFile().fileName;
       if (!declFile || declFile.includes("node_modules") || declFile.includes("/lib.")) return;
-      recallSeen++;
-      const matched = index.edges.some(
-        (e) => e.file === relFile && Math.abs((e.line ?? 0) - line) <= 1 && lastNameOf(e.to) === callee,
-      );
-      if (matched) recallHit++;
-      else if (worst.length < 10) {
-        const declName = sym?.getName();
-        if (declName) {
-          worst.push({
-            from_file: relFile,
-            from_line: line,
-            callee,
-            ts_resolved_to: `${realRel(root, declFile)}:${declName}`,
-            issue: "dna_missed",
-          });
-        }
-      }
+      allSites.push({ file: relFile, line, callee });
     });
   }
+  const recallSample = pickRandom(allSites, sample, rand);
+  let recallSeen = 0;
+  let recallHit = 0;
+  for (const site of recallSample) {
+    recallSeen++;
+    const matched = index.edges.some(
+      (e) => e.file === site.file && Math.abs((e.line ?? 0) - site.line) <= 1 && lastNameOf(e.to) === site.callee,
+    );
+    if (matched) recallHit++;
+    else if (worst.length < 10) {
+      worst.push({
+        from_file: site.file,
+        from_line: site.line,
+        callee: site.callee,
+        issue: "dna_missed",
+      });
+    }
+  }
+
+  const precisionDenom = confirmed + contradicted;
+  const precision = precisionDenom === 0 ? 1 : confirmed / precisionDenom;
+  const recall = recallSeen === 0 ? 1 : recallHit / recallSeen;
 
   return {
     language: "typescript",
     sample_size: sampleEdges.length,
     total_edges: index.edges.length,
-    precision: sampleEdges.length === 0 ? 1 : precisionHits / sampleEdges.length,
-    recall: recallSeen === 0 ? 1 : recallHit / recallSeen,
+    precision,
+    precision_ci: wilson(confirmed, precisionDenom),
+    precision_confirmed: confirmed,
+    precision_contradicted: contradicted,
+    precision_inconclusive: inconclusive,
+    recall,
+    recall_ci: wilson(recallHit, recallSeen),
+    recall_seen: recallSeen,
+    recall_hit: recallHit,
     coverage: coverageOf(index),
     worst: worst.slice(0, 10),
   };
@@ -229,12 +313,12 @@ function guessTargetFile(index: DnaIndex, edge: DnaIndex["edges"][number]): stri
   return target?.file ?? "?";
 }
 
-function pickRandom<T>(arr: T[], n: number): T[] {
+function pickRandom<T>(arr: T[], n: number, rand: () => number = Math.random): T[] {
   if (arr.length <= n) return arr.slice();
   const out: T[] = [];
   const used = new Set<number>();
   while (out.length < n) {
-    const i = Math.floor(Math.random() * arr.length);
+    const i = Math.floor(rand() * arr.length);
     if (used.has(i)) continue;
     used.add(i);
     out.push(arr[i]!);

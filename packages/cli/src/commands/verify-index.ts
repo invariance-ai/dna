@@ -40,7 +40,7 @@ export function registerVerifyIndex(program: Command): void {
     program
       .command("verify-index")
       .description("Score DNA's symbol graph against TypeScript's type checker (precision/recall/coverage)")
-      .option("--sample <n>", "Sampled edges & callsites (default 50)")
+      .option("--sample <n>", "Sampled edges & callsites (default 200)")
       .option("--no-cache", "Don't write the cached report")
       .option("--json", "Emit JSON instead of text"),
   ).action(async (opts: Opts) => {
@@ -83,10 +83,21 @@ export function registerVerifyIndex(program: Command): void {
 
 function renderReport(r: VerifyReport, t: Thresholds): void {
   const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
+  const ci = (lo: number, hi: number): string => `[${pct(lo)}–${pct(hi)}]`;
   const badge = (ok: boolean): string => (ok ? kleur.green("✓") : kleur.red("✗"));
   console.log(kleur.bold("graph quality") + kleur.dim(`  (sample=${r.sample_size}/${r.total_edges} edges)`));
-  console.log(`  ${badge(r.precision >= t.precision)} precision  ${pct(r.precision)}  ${kleur.dim(`(≥${pct(t.precision)})`)}`);
-  console.log(`  ${badge(r.recall    >= t.recall)}    recall     ${pct(r.recall)}     ${kleur.dim(`(≥${pct(t.recall)})`)}`);
+  console.log(
+    `  ${badge(r.precision >= t.precision)} precision  ${pct(r.precision)}  ${kleur.dim(`95% CI ${ci(r.precision_ci.low, r.precision_ci.high)}  (≥${pct(t.precision)})`)}`,
+  );
+  console.log(
+    `      ${kleur.dim(`confirmed=${r.precision_confirmed}  contradicted=${r.precision_contradicted}  inconclusive=${r.precision_inconclusive}`)}`,
+  );
+  console.log(
+    `  ${badge(r.recall    >= t.recall)}    recall     ${pct(r.recall)}     ${kleur.dim(`95% CI ${ci(r.recall_ci.low, r.recall_ci.high)}  (≥${pct(t.recall)})`)}`,
+  );
+  console.log(
+    `      ${kleur.dim(`hit=${r.recall_hit}/${r.recall_seen}`)}`,
+  );
   console.log(`  ${badge(r.coverage  >= t.coverage)}  coverage   ${pct(r.coverage)}   ${kleur.dim(`(≥${pct(t.coverage)})`)}`);
   if (r.worst.length > 0) {
     console.log("\n" + kleur.bold("worst offenders"));
