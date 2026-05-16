@@ -34,14 +34,14 @@ export function registerBench(program: Command): void {
       .option("--tasks <path>", "Tasks directory (default bench/repo-edit-bench/tasks)")
       .option("--out <path>", "Output directory (default bench/results/<timestamp>)")
       .option("--agent <cmd>", "Agent command (default: `claude -p`)")
-      .option("--n <n>", "Attempts per (task, arm). Default 1")
+      .option("--n <n>", "Attempts per (task, arm). Default 3 (minimum for meaningful variance)")
       .option("--timeout <sec>", "Per-attempt timeout in seconds. Default 300"),
   ).action(async (opts: RootOption & { tasks?: string; out?: string; agent?: string; n?: string; timeout?: string }) => {
     const root = resolveRoot(opts);
     const tasksDir = opts.tasks ? path.resolve(root, opts.tasks) : path.join(root, "bench/repo-edit-bench/tasks");
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const outDir = opts.out ? path.resolve(root, opts.out) : path.join(root, "bench/results", stamp);
-    const n = opts.n ? Number(opts.n) : 1;
+    const n = opts.n ? Number(opts.n) : 3;
     const timeoutSec = opts.timeout ? Number(opts.timeout) : 300;
     console.log(kleur.bold("bench run") + kleur.dim(`  tasks=${path.relative(root, tasksDir)} out=${path.relative(root, outDir)} n=${n}`));
     const summary = await runBench(root, tasksDir, outDir, {
@@ -51,6 +51,12 @@ export function registerBench(program: Command): void {
     });
     const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
     console.log(`\nbaseline pass ${pct(summary.baseline.pass_rate)}  •  dna pass ${pct(summary.dna.pass_rate)}  •  Δ ${pct(summary.dna.pass_rate - summary.baseline.pass_rate)}`);
+    if (summary.baseline.timed_out > 0 || summary.dna.timed_out > 0) {
+      console.log(kleur.yellow(`timed out: baseline=${summary.baseline.timed_out} dna=${summary.dna.timed_out}`));
+    }
+    for (const w of summary.warnings) {
+      console.log(kleur.yellow(`warning: ${w}`));
+    }
     console.log(kleur.dim(`summary: ${path.relative(root, path.join(outDir, "summary.md"))}`));
   });
 

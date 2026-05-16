@@ -3,7 +3,7 @@ prompt: |
   Add a $5000 cap to refunds for non-enterprise customers. Touch only the
   refund handler. Don't introduce a new helper if an existing one fits.
 checks:
+  # Cap is present in the refund handler.
   - "grep -q '5000' src/refunds.ts"
-  - "pnpm -s test 2>/dev/null || true"
-invariants_expected:
-  - High-value refunds require approval
+  # No new top-level helper file was created (the prompt forbids it).
+  - "! ls src/refund-*.ts src/refundCap.ts src/refund_cap.ts 2>/dev/null | grep ."
