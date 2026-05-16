@@ -138,7 +138,10 @@ export async function buildIndex(root: string, parsed: ParsedFile[]): Promise<Dn
       const qualified_name = s.qualified_name ?? s.name;
       const rel: SymbolRef = {
         ...s,
-        id: stableSymbolId({ file: relFile, qualifiedName: qualified_name, body: `${qualified_name}:${s.line}` }),
+        // Stable across line movement: hash is keyed by qualified_name only.
+        // The file prefix already disambiguates same-named symbols across files,
+        // so the id only changes on rename. See symbol_id.ts and issue #27.
+        id: stableSymbolId({ file: relFile, qualifiedName: qualified_name }),
         qualified_name,
         file: relFile,
       };

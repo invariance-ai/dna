@@ -6,10 +6,14 @@ import { createHash } from "node:crypto";
  * Legacy v0.1 id: `<file>#<qualified_name>:<line>` — changes whenever a
  * symbol moves down the file, which breaks anchors in notes/decisions.
  *
- * New stable id: `<file>#<qualified_name>@<body_hash>` — the line is still
- * carried separately as a UI hint, but the id only changes when the symbol's
- * body (or name) changes. Anchors in knowledge files survive refactors that
- * move symbols around but don't touch them.
+ * New stable id: `<file>#<qualified_name>@<hash>` where the hash is keyed
+ * by `qualifiedName` (callers may pass a richer `body` if they want body-
+ * sensitive anchors). With the default keying the id changes only on
+ * rename / file move — exactly the anchor semantics #27 needs so that
+ * refactors which shuffle lines don't invalidate notes/decisions.
+ *
+ * The line number is still carried on SymbolRef separately as a UI hint;
+ * it is intentionally NOT part of the id.
  *
  * We keep the legacy format around as `legacySymbolId` so existing indexes,
  * notes, and tests keep working until callers opt in.
