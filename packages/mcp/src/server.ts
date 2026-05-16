@@ -58,6 +58,7 @@ import {
   inferSymbols,
   seed,
   ALL_SOURCE_GLOBS,
+  validateKnowledge,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -453,6 +454,9 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
     case "review_diff": {
       const a = args as { base?: string };
       return gateChanged(root, { base: a.base });
+    }
+    case "validate_knowledge": {
+      return validateKnowledge(root);
     }
     case "seed_propose": {
       const a = args as { tier?: "safe" | "medium" | "aggressive"; limit?: number };

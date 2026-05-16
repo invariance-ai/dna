@@ -149,6 +149,12 @@ export const Note = z.object({
   verified_at: z.string().optional(),
   /** Author identity recorded at write time (git user.email when available). */
   author: z.string().optional(),
+  /** Stable symbol id this note is anchored to. Survives renames/moves. */
+  anchor_id: z.string().optional(),
+  /** Commit SHA at note-creation time (lets us detect if anchor body changed). */
+  source_commit: z.string().optional(),
+  /** ISO date after which this note auto-archives. */
+  expires_at: z.string().optional(),
 });
 export type Note = z.infer<typeof Note>;
 
@@ -181,6 +187,9 @@ export const Decision = z.object({
   confidence: z.number().min(0).max(1).optional(),
   verified_by: z.string().optional(),
   verified_at: z.string().optional(),
+  anchor_id: z.string().optional(),
+  source_commit: z.string().optional(),
+  expires_at: z.string().optional(),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -927,6 +936,37 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- validate_knowledge (P3) ---------- */
+
+export const ValidateKnowledgeInput = z.object({});
+export type ValidateKnowledgeInput = z.infer<typeof ValidateKnowledgeInput>;
+
+export const KnowledgeIssue = z.object({
+  kind: z.enum(["missing_anchor", "expired", "no_anchor_id"]),
+  source: z.enum(["note", "decision", "invariant"]),
+  entry: z.object({
+    symbol: z.string().optional(),
+    anchor_id: z.string().optional(),
+    summary: z.string(),
+  }),
+  suggested_anchor: z.object({
+    symbol_id: z.string(),
+    qualified_name: z.string(),
+    file: z.string(),
+    score: z.number(),
+  }).optional(),
+});
+
+export const ValidateKnowledgeResult = z.object({
+  total: z.object({
+    notes: z.number().int().nonnegative(),
+    decisions: z.number().int().nonnegative(),
+    invariants: z.number().int().nonnegative(),
+  }),
+  issues: z.array(KnowledgeIssue),
+});
+export type ValidateKnowledgeResult = z.infer<typeof ValidateKnowledgeResult>;
+
 /* ---------- seed_propose (P1.5) ---------- */
 
 export const SeedProposeInput = z.object({
@@ -1247,6 +1287,12 @@ export const TOOLS = {
       "Mine repo history (TODOs, commits, PRs) for candidate notes and invariants. Tiered by confidence: safe (TODOs/FIXMEs only), medium (+ recent commits/PRs), aggressive (+ blame, weaker signals). Returns proposals — does not auto-write. Pair with `dna init --seed <tier>` for the CLI flow that drops candidates into .dna/candidates/.",
     input: SeedProposeInput,
     output: SeedProposeResult,
+  },
+  validate_knowledge: {
+    description:
+      "Audit notes, decisions, and invariants for anchor drift: symbols that vanished, anchors using legacy line-based IDs, and entries past expires_at. Returns suggested re-anchors when a fuzzy match exists. Run periodically after refactors to keep memory from rotting.",
+    input: ValidateKnowledgeInput,
+    output: ValidateKnowledgeResult,
   },
 } as const;
 

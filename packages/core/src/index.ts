@@ -49,3 +49,4 @@ export * from "./symbol_id.js";
 export * from "./verify_index.js";
 export * from "./diff_to_symbols.js";
 export * from "./gate_stream.js";
+export * from "./validate_knowledge.js";
