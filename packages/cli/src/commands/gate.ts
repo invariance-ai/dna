@@ -1,12 +1,21 @@
 import type { Command } from "commander";
 import kleur from "kleur";
-import { gate, type GateHit } from "@invariance/dna-core";
+import {
+  gate,
+  gateChanged,
+  watchGateStream,
+  type GateHit,
+  type GateResult,
+} from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 interface GateOpts extends RootOption {
   diff?: boolean;
   base?: string;
   json?: boolean;
+  watch?: boolean;
+  changed?: boolean;
+  debounce?: string;
 }
 
 export function registerGate(program: Command): void {
@@ -16,10 +25,40 @@ export function registerGate(program: Command): void {
       .description("Fail when changed files touch blocking invariants (unless waived)")
       .option("--diff", "Gate the current working diff", false)
       .option("--base <ref>", "Diff base (default HEAD)", "HEAD")
+      .option("--changed", "Only evaluate symbols whose lines actually changed (hunk-level)")
+      .option("--watch", "Stream gate findings as files change (long-running)")
+      .option("--debounce <ms>", "Debounce window for --watch (default 500ms)")
       .option("--json", "Emit JSON"),
   ).action(async (opts: GateOpts) => {
     const root = resolveRoot(opts);
-    const result = await gate(root, { base: opts.base });
+
+    if (opts.watch) {
+      const debounceMs = opts.debounce ? Number(opts.debounce) : undefined;
+      console.log(kleur.dim(`watching ${root} for gate violations (Ctrl-C to stop)`));
+      const handle = await watchGateStream(root, {
+        debounceMs,
+        base: opts.base,
+        onEntry: (entry) => {
+          if (opts.json) {
+            console.log(JSON.stringify(entry));
+          } else {
+            console.log(kleur.bold(`\n[${entry.ts}]`) + kleur.dim(` ${entry.changed_files.length} file(s) touched`));
+            for (const h of entry.hits) printHit(h);
+            if (entry.blocking.length > 0) {
+              console.log(kleur.red(`  ✗ ${entry.blocking.length} blocking`));
+            }
+          }
+        },
+      });
+      const shutdown = (): void => { handle.stop(); process.exit(0); };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      return;
+    }
+
+    const result: GateResult = opts.changed
+      ? await gateChanged(root, { base: opts.base })
+      : await gate(root, { base: opts.base });
 
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));

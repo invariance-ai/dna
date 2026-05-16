@@ -921,6 +921,45 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- gate_stream / review_diff (P2) ---------- */
+
+export const GateStreamInput = z.object({
+  /** Preferred cursor: return entries with seq > since_seq. */
+  since_seq: z.number().int().nonnegative().optional(),
+  /** Backwards-compat cursor: ISO timestamp. Ignored if since_seq is set. */
+  since: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+});
+export type GateStreamInput = z.infer<typeof GateStreamInput>;
+
+export const GateStreamEntry = z.object({
+  /** Monotonic per-file counter; use as cursor for the next call. */
+  seq: z.number().int().nonnegative(),
+  ts: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  hits: z.array(z.any()),
+  blocking: z.array(z.any()),
+});
+export const GateStreamResult = z.object({
+  entries: z.array(GateStreamEntry),
+});
+export type GateStreamResult = z.infer<typeof GateStreamResult>;
+
+export const ReviewDiffInput = z.object({
+  base: z.string().optional(),
+});
+export type ReviewDiffInput = z.infer<typeof ReviewDiffInput>;
+
+export const ReviewDiffResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  hits: z.array(z.any()),
+  blocking: z.array(z.any()),
+});
+export type ReviewDiffResult = z.infer<typeof ReviewDiffResult>;
+
 /* ---------- verify_index (P0c) ---------- */
 
 export const VerifyIndexInput = z.object({
@@ -1165,6 +1204,18 @@ export const TOOLS = {
       "Score DNA's symbol graph against TypeScript's type checker. Returns precision (DNA edges ts confirms), recall (ts edges DNA found), coverage (% of edges with exact|typed status), and a list of worst-offending callsites. Use this to prove DNA's affected-symbols claims are trustworthy on a given repo, or to find graph-quality regressions after a parser change.",
     input: VerifyIndexInput,
     output: VerifyIndexResult,
+  },
+  gate_stream: {
+    description:
+      "Tail the live gate stream — invariant violations detected while files were being edited (via `dna gate --watch` or a PostToolUse hook). Use between tool calls to catch a violation you just introduced. Preferred cursor: `since_seq` (monotonic counter from the last entry you saw; returns entries with seq > since_seq). `since` (ISO timestamp) is accepted for backwards compatibility and ignored when `since_seq` is supplied. Use `limit` to cap the last N.",
+    input: GateStreamInput,
+    output: GateStreamResult,
+  },
+  review_diff: {
+    description:
+      "Final-call invariant check against the current dirty diff. Maps changed hunks to changed symbols and runs the gate. Call before declaring an edit done.",
+    input: ReviewDiffInput,
+    output: ReviewDiffResult,
   },
 } as const;
 

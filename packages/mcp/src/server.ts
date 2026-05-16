@@ -53,6 +53,8 @@ import {
   findPromotionCandidates,
   readIndex,
   verifyIndex,
+  readGateStream,
+  gateChanged,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -417,6 +419,15 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const a = args as { sample?: number };
       const index = await readIndex(root);
       return verifyIndex(index, { root, sample: a.sample });
+    }
+    case "gate_stream": {
+      const a = args as { since?: string; since_seq?: number; limit?: number };
+      const entries = await readGateStream(root, a);
+      return { entries };
+    }
+    case "review_diff": {
+      const a = args as { base?: string };
+      return gateChanged(root, { base: a.base });
     }
     default:
       throw new Error(`Tool ${name} dispatch not implemented`);
