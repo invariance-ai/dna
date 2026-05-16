@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Parser, Language, type Node } from "web-tree-sitter";
 import type { SymbolRef } from "@invariance/dna-schemas";
-import type { ParsedFile, ParsedLanguage } from "./parser.js";
+import type { ImportBinding, ParsedFile, ParsedLanguage } from "./parser.js";
 
 /**
  * v0.2 parser: tree-sitter (WASM) for TS/TSX/JS/Python. Native deps stay
@@ -94,16 +94,129 @@ export async function parseFileTS(filePath: string): Promise<ParsedFile> {
 
   const symbols: SymbolRef[] = [];
   const call_sites: ParsedFile["call_sites"] = [];
+  const imports: ImportBinding[] = [];
+  const re_exports: NonNullable<ParsedFile["re_exports"]> = [];
   const seen = new Set<string>();
 
   if (language === "python") {
     walkPython(tree.rootNode, filePath, symbols, call_sites, seen, []);
+    extractPythonImports(tree.rootNode, imports);
   } else {
     walkJsTs(tree.rootNode, filePath, symbols, call_sites, seen, "<module>", []);
+    extractTsImports(tree.rootNode, imports, re_exports);
   }
 
   tree.delete();
-  return { path: filePath, language, symbols, call_sites };
+  return { path: filePath, language, symbols, call_sites, imports, re_exports };
+}
+
+// ---------- Import extractors ----------
+
+function extractTsImports(
+  root: Node,
+  imports: ImportBinding[],
+  re_exports: NonNullable<ParsedFile["re_exports"]>,
+): void {
+  for (const c of root.namedChildren) {
+    if (!c) continue;
+    if (c.type === "import_statement") {
+      const source = stringLiteralText(c.childForFieldName("source"));
+      if (!source) continue;
+      const clause = c.namedChildren.find((n) => n?.type === "import_clause");
+      if (!clause) {
+        // side-effect import; skip
+        continue;
+      }
+      for (const part of clause.namedChildren) {
+        if (!part) continue;
+        if (part.type === "identifier") {
+          imports.push({ local: part.text, source, kind: "default" });
+        } else if (part.type === "namespace_import") {
+          const id = part.namedChildren.find((n) => n?.type === "identifier");
+          if (id) imports.push({ local: id.text, source, kind: "namespace" });
+        } else if (part.type === "named_imports") {
+          for (const spec of part.namedChildren) {
+            if (!spec || spec.type !== "import_specifier") continue;
+            const name = spec.childForFieldName("name")?.text;
+            const alias = spec.childForFieldName("alias")?.text;
+            if (!name) continue;
+            imports.push({ local: alias ?? name, source, imported: name, kind: "named" });
+          }
+        }
+      }
+    } else if (c.type === "export_statement") {
+      const source = stringLiteralText(c.childForFieldName("source"));
+      if (!source) continue; // not a re-export
+      const named = c.namedChildren.find((n) => n?.type === "export_clause");
+      if (named) {
+        for (const spec of named.namedChildren) {
+          if (!spec || spec.type !== "export_specifier") continue;
+          const name = spec.childForFieldName("name")?.text;
+          const alias = spec.childForFieldName("alias")?.text;
+          if (!name) continue;
+          re_exports.push({ local: name, exported: alias ?? name, source });
+        }
+      } else {
+        // `export * from "./x"` — record a wildcard re-export
+        re_exports.push({ exported: "*", source });
+      }
+    }
+  }
+}
+
+function extractPythonImports(root: Node, imports: ImportBinding[]): void {
+  walkPyImports(root, imports);
+}
+
+function walkPyImports(node: Node, imports: ImportBinding[]): void {
+  const t = node.type;
+  if (t === "import_statement") {
+    // import a, b as c
+    for (const child of node.namedChildren) {
+      if (!child) continue;
+      if (child.type === "dotted_name") {
+        const name = child.text;
+        imports.push({ local: name.split(".").pop()!, source: name, kind: "namespace" });
+      } else if (child.type === "aliased_import") {
+        const name = child.childForFieldName("name")?.text;
+        const alias = child.childForFieldName("alias")?.text;
+        if (name) imports.push({ local: alias ?? name, source: name, kind: "namespace" });
+      }
+    }
+  } else if (t === "import_from_statement") {
+    const moduleNode = node.childForFieldName("module_name");
+    const source = moduleNode?.text;
+    if (!source) return;
+    // children after the source are the imported names
+    for (const child of node.namedChildren) {
+      if (!child || child === moduleNode) continue;
+      if (child.type === "dotted_name" || child.type === "identifier") {
+        const name = child.text;
+        imports.push({ local: name, source, imported: name, kind: "named" });
+      } else if (child.type === "aliased_import") {
+        const name = child.childForFieldName("name")?.text;
+        const alias = child.childForFieldName("alias")?.text;
+        if (name) imports.push({ local: alias ?? name, source, imported: name, kind: "named" });
+      } else if (child.type === "wildcard_import") {
+        imports.push({ local: "*", source, kind: "namespace" });
+      }
+    }
+  }
+  // imports are top-level; no deep recursion needed beyond module body
+  if (node.type === "module") {
+    for (const child of node.children) {
+      if (child) walkPyImports(child, imports);
+    }
+  }
+}
+
+function stringLiteralText(n: Node | null | undefined): string | undefined {
+  if (!n) return undefined;
+  const raw = n.text;
+  if (raw.length >= 2 && (raw.startsWith('"') || raw.startsWith("'") || raw.startsWith("`"))) {
+    return raw.slice(1, -1);
+  }
+  return raw;
 }
 
 // ---------- TS/JS walker ----------
@@ -200,17 +313,20 @@ function walkJsTs(
   } else if (t === "call_expression") {
     const fn = node.childForFieldName("function");
     if (fn) {
-      let callee: string | undefined;
-      if (fn.type === "identifier") callee = fn.text;
-      else if (fn.type === "member_expression") {
-        callee = fn.childForFieldName("property")?.text;
-      }
-      if (callee && callee !== enclosing) {
-        call_sites.push({
-          callee_name: callee,
-          line: node.startPosition.row + 1,
-          from: enclosing,
-        });
+      // Only track bare-identifier calls (`foo()`). Member calls (`x.foo()`)
+      // can't be resolved from name alone without type info and produce
+      // massive false-positive rates (every `.push()` matching a local
+      // `function push()`). Method calls are picked up when the receiver's
+      // class is in scope via the dedicated method walker.
+      if (fn.type === "identifier") {
+        const callee = fn.text;
+        if (callee && callee !== enclosing) {
+          call_sites.push({
+            callee_name: callee,
+            line: node.startPosition.row + 1,
+            from: enclosing,
+          });
+        }
       }
     }
   }
@@ -266,12 +382,8 @@ function walkPython(
     }
   } else if (t === "call") {
     const fn = node.childForFieldName("function");
-    if (fn) {
-      let callee: string | undefined;
-      if (fn.type === "identifier") callee = fn.text;
-      else if (fn.type === "attribute") {
-        callee = fn.childForFieldName("attribute")?.text;
-      }
+    if (fn && fn.type === "identifier") {
+      const callee = fn.text;
       if (callee && callee !== enclosing) {
         call_sites.push({
           callee_name: callee,
@@ -280,6 +392,7 @@ function walkPython(
         });
       }
     }
+    // attribute calls (`self.bar()`, `obj.foo()`) skipped — see TS walker.
   }
 
   for (const c of node.children) {

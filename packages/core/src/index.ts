@@ -44,3 +44,6 @@ export * from "./contract.js";
 export * from "./rejected.js";
 export * from "./todos.js";
 export * from "./lesson_pending.js";
+export * from "./resolver.js";
+export * from "./symbol_id.js";
+export * from "./verify_index.js";

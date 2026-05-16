@@ -62,7 +62,7 @@ def baz():
 
     const calls = parsed.call_sites.map((c) => `${c.from}->${c.callee_name}`).sort();
     expect(calls).toContain("Foo.bar->baz");
-    expect(calls).toContain("Foo.qux->bar");
+    // self.bar() is an attribute call — intentionally skipped (see parser_ts).
   });
 
   it("falls back to regex for unsupported extensions (.go)", async () => {

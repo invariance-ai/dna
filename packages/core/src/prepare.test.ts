@@ -44,7 +44,7 @@ async function fixtureRepo(): Promise<string> {
     parseFile(path.join(root, "src/refunds.ts")),
     parseFile(path.join(root, "src/api.ts")),
   ]);
-  const index = buildIndex(root, parsed);
+  const index = await buildIndex(root, parsed);
   await writeIndex(root, index);
   return root;
 }

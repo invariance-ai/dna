@@ -26,7 +26,22 @@ export const SymbolRef = z.object({
 });
 export type SymbolRef = z.infer<typeof SymbolRef>;
 
-export const ResolutionStatus = z.enum(["exact", "name-only", "unresolved"]);
+/**
+ * Edge confidence, ordered most-to-least trustworthy:
+ *   exact      — resolved via import binding + symbol table; same file or
+ *                resolved module path; we know the exact target symbol.
+ *   typed      — confirmed by an external type oracle (tsserver / pyright).
+ *   heuristic  — name-matched against the symbol index (current regex behavior).
+ *   unresolved — callee identified but no candidate target found.
+ *   name-only  — legacy label for v0.1 regex graph; same semantics as heuristic.
+ */
+export const ResolutionStatus = z.enum([
+  "exact",
+  "typed",
+  "heuristic",
+  "unresolved",
+  "name-only",
+]);
 export type ResolutionStatus = z.infer<typeof ResolutionStatus>;
 
 export const Edge = z.object({
@@ -906,6 +921,33 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- verify_index (P0c) ---------- */
+
+export const VerifyIndexInput = z.object({
+  sample: z.number().int().positive().optional(),
+});
+export type VerifyIndexInput = z.infer<typeof VerifyIndexInput>;
+
+export const VerifyIndexWorst = z.object({
+  from_file: z.string(),
+  from_line: z.number().int().nonnegative(),
+  callee: z.string(),
+  dna_resolved_to: z.string().optional(),
+  ts_resolved_to: z.string().optional(),
+  issue: z.enum(["wrong_target", "ts_says_no_target", "dna_missed"]),
+});
+
+export const VerifyIndexResult = z.object({
+  language: z.enum(["typescript"]),
+  sample_size: z.number().int().nonnegative(),
+  total_edges: z.number().int().nonnegative(),
+  precision: z.number().min(0).max(1),
+  recall: z.number().min(0).max(1),
+  coverage: z.number().min(0).max(1),
+  worst: z.array(VerifyIndexWorst),
+});
+export type VerifyIndexResult = z.infer<typeof VerifyIndexResult>;
+
 /**
  * Tool catalogue — referenced by CLI command registration and MCP server
  * registration so the surfaces cannot drift.
@@ -1117,6 +1159,12 @@ export const TOOLS = {
       "Rule-based clustering of un-promoted notes on a symbol; clusters with ≥ min_occurrences and overlap ≥ threshold are candidates for promotion to invariants. Use as the authoring queue for the team's rules layer.",
     input: PromotionCandidatesInput,
     output: PromotionCandidatesResult,
+  },
+  verify_index: {
+    description:
+      "Score DNA's symbol graph against TypeScript's type checker. Returns precision (DNA edges ts confirms), recall (ts edges DNA found), coverage (% of edges with exact|typed status), and a list of worst-offending callsites. Use this to prove DNA's affected-symbols claims are trustworthy on a given repo, or to find graph-quality regressions after a parser change.",
+    input: VerifyIndexInput,
+    output: VerifyIndexResult,
   },
 } as const;
 

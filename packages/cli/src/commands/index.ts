@@ -22,7 +22,7 @@ export function registerIndex(program: Command): void {
       const files = await scanFiles(root, config);
       if (!opts.quiet) process.stdout.write(kleur.dim(`scanning ${files.length} files…`));
       const parsed = await Promise.all(files.map((f) => parseFile(f)));
-      const index = buildIndex(root, parsed);
+      const index = await buildIndex(root, parsed);
       await writeIndex(root, index);
       reportParserFallbacks();
       const ms = Date.now() - t0;

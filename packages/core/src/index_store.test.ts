@@ -39,14 +39,16 @@ describe("index graph", () => {
       parseFile(path.join(root, "src/a.ts")),
       parseFile(path.join(root, "src/b.ts")),
     ]);
-    const index = buildIndex(root, parsed);
+    const index = await buildIndex(root, parsed);
     const caller = index.symbols.find((s) => s.name === "caller");
     const aHelper = index.symbols.find((s) => s.file === "src/a.ts" && s.name === "helper");
     const bHelper = index.symbols.find((s) => s.file === "src/b.ts" && s.name === "helper");
 
-    expect(caller?.id).toBe("src/a.ts#caller:2");
-    expect(aHelper?.id).toBe("src/a.ts#helper:1");
-    expect(bHelper?.id).toBe("src/b.ts#helper:1");
+    // Stable IDs: `<file>#<qualified_name>@<10-char-hex>` — line-movement robust.
+    expect(caller?.id).toMatch(/^src\/a\.ts#caller@[0-9a-f]{10}$/);
+    expect(aHelper?.id).toMatch(/^src\/a\.ts#helper@[0-9a-f]{10}$/);
+    expect(bHelper?.id).toMatch(/^src\/b\.ts#helper@[0-9a-f]{10}$/);
+    expect(aHelper?.id).not.toBe(bHelper?.id);
     expect(index.edges).toContainEqual(
       expect.objectContaining({ from_id: caller?.id, to_id: aHelper?.id }),
     );
@@ -97,11 +99,11 @@ describe("index graph", () => {
       parseFile(path.join(root, "src/refunds.ts")),
       parseFile(path.join(root, "src/refunds.test.ts")),
     ]);
-    await writeIndex(root, buildIndex(root, parsed));
+    await writeIndex(root, await buildIndex(root, parsed));
 
     const ctx = await open(root);
     const sym = resolveSymbol("createRefund", ctx);
-    expect(sym?.id).toBe("src/refunds.ts#createRefund:2");
+    expect(sym?.id).toMatch(/^src\/refunds\.ts#createRefund@[0-9a-f]{10}$/);
 
     const result = await getContext(
       { symbol: "createRefund", depth: 2, strands: ["structural", "tests", "invariants"] },
@@ -132,7 +134,7 @@ describe("staleFiles", () => {
       parseFile(path.join(root, "src/a.ts")),
       parseFile(path.join(root, "src/b.ts")),
     ]);
-    const index = buildIndex(root, parsed);
+    const index = await buildIndex(root, parsed);
     await writeIndex(root, index);
 
     // Make a.ts newer than the index, delete b.ts.
