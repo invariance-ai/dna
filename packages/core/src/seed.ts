@@ -2,6 +2,7 @@ import { execFile as _execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import fg from "fast-glob";
 import type { SeedProposal, SeedResult } from "@invariance/dna-schemas";
 import { isGitRepo } from "./git.js";
 import { extractTodos } from "./notes.js";
@@ -42,25 +43,42 @@ export async function seed(root: string, opts: SeedOptions = {}): Promise<SeedRe
     }
   }
 
-  // TODO/FIXME mining — re-use extractTodos heuristic.
-  for (const f of opts.scanFiles ?? []) {
-    try {
-      const raw = await readFile(path.resolve(root, f), "utf8");
-      const items = extractTodos(raw, f);
-      for (const t of items) {
-        proposals.push({
-          kind: "note",
-          symbol: t.symbol,
-          applies_to: [t.symbol],
-          text: t.lesson,
-          evidence_link: t.evidence,
-          source: "todo",
-          confidence: 0.6,
-        });
-        todos++;
+  // TODO/FIXME mining — re-use extractTodos heuristic. Expand globs first
+  // so callers can pass patterns (e.g. ALL_SOURCE_GLOBS) rather than
+  // pre-walked file lists.
+  if (opts.scanFiles && opts.scanFiles.length > 0) {
+    const isGlob = (s: string): boolean => /[*?[\]]/.test(s);
+    const patterns = opts.scanFiles.filter(isGlob);
+    const literals = opts.scanFiles.filter((s) => !isGlob(s));
+    let files = literals;
+    if (patterns.length > 0) {
+      const matched = await fg(patterns, {
+        cwd: root,
+        absolute: false,
+        ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/.dna/**"],
+        followSymbolicLinks: false,
+      });
+      files = files.concat(matched);
+    }
+    for (const f of files) {
+      try {
+        const raw = await readFile(path.resolve(root, f), "utf8");
+        const items = extractTodos(raw, f);
+        for (const t of items) {
+          proposals.push({
+            kind: "note",
+            symbol: t.symbol,
+            applies_to: [t.symbol],
+            text: t.lesson,
+            evidence_link: t.evidence,
+            source: "todo",
+            confidence: 0.6,
+          });
+          todos++;
+        }
+      } catch {
+        /* skip */
       }
-    } catch {
-      /* skip */
     }
   }
 

@@ -554,7 +554,9 @@ export type FindReusableResult = z.infer<typeof FindReusableResult>;
  * invariants + risk) optimised for the LLM, not for chaining.
  */
 export const PrepareEditInput = z.object({
-  symbol: z.string(),
+  symbol: z.string().optional().describe(
+    "Symbol to prepare. Optional if `intent` is provided — DNA will infer the top-matching symbol from the intent text.",
+  ),
   intent: z.string().describe("What the agent plans to change, in one sentence."),
   budget: z.number().int().positive().optional().describe(
     "Optional token budget; sections are dropped tail-first when exceeded.",
@@ -582,6 +584,10 @@ export const PrepareEditResult = z.object({
   preferences: z.array(Preference).default([]),
   tests_to_run: z.array(z.string()),
   risk: z.enum(["low", "medium", "high"]),
+  /** When `symbol` was inferred from intent, the ranked alternates. */
+  candidates: z
+    .array(z.object({ symbol: z.string(), score: z.number(), via: z.string() }))
+    .optional(),
 });
 export type PrepareEditResult = z.infer<typeof PrepareEditResult>;
 
@@ -921,6 +927,25 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- seed_propose (P1.5) ---------- */
+
+export const SeedProposeInput = z.object({
+  tier: z.enum(["safe", "medium", "aggressive"]).default("safe"),
+  limit: z.number().int().positive().optional(),
+});
+export type SeedProposeInput = z.infer<typeof SeedProposeInput>;
+
+export const SeedProposeResult = z.object({
+  tier: z.string(),
+  proposals: z.array(z.any()),
+  scanned: z.object({
+    commits: z.number().int().nonnegative(),
+    prs: z.number().int().nonnegative(),
+    todos: z.number().int().nonnegative(),
+  }),
+});
+export type SeedProposeResult = z.infer<typeof SeedProposeResult>;
+
 /* ---------- gate_stream / review_diff (P2) ---------- */
 
 export const GateStreamInput = z.object({
@@ -1216,6 +1241,12 @@ export const TOOLS = {
       "Final-call invariant check against the current dirty diff. Maps changed hunks to changed symbols and runs the gate. Call before declaring an edit done.",
     input: ReviewDiffInput,
     output: ReviewDiffResult,
+  },
+  seed_propose: {
+    description:
+      "Mine repo history (TODOs, commits, PRs) for candidate notes and invariants. Tiered by confidence: safe (TODOs/FIXMEs only), medium (+ recent commits/PRs), aggressive (+ blame, weaker signals). Returns proposals — does not auto-write. Pair with `dna init --seed <tier>` for the CLI flow that drops candidates into .dna/candidates/.",
+    input: SeedProposeInput,
+    output: SeedProposeResult,
   },
 } as const;
 
