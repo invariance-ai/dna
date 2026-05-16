@@ -54,6 +54,7 @@ export function registerPrepare(program: Command): void {
       const intentText = (opts.fromPrompt && opts.fromPrompt.trim())
         || (opts.intent && opts.intent !== "(unspecified)" ? opts.intent : undefined);
       let candidates: Array<{ symbol: string; score: number; via: string }> = [];
+      let lowConfidence = false;
       if (!symbol && intentText) {
         const matches = await inferSymbols(root, intentText, { limit: 5 });
         if (matches.length === 0) {
@@ -66,10 +67,20 @@ export function registerPrepare(program: Command): void {
         }));
         const top = matches[0]!;
         symbol = top.symbol.qualified_name ?? top.symbol.name;
+        const LOW_CONFIDENCE_THRESHOLD = 70;
+        lowConfidence = candidates.length === 1 && top.score < LOW_CONFIDENCE_THRESHOLD;
         if (!opts.json) {
           console.error(
             kleur.dim(`inferred symbol "${symbol}" (confidence ${top.score}, via ${top.via}) from intent`),
           );
+          if (lowConfidence) {
+            console.error(
+              kleur.yellow(
+                `warning: only one candidate matched and confidence is low (${top.score}/100). ` +
+                `Consider passing the symbol explicitly with \`--symbol\` or as a positional arg.`,
+              ),
+            );
+          }
           if (candidates.length > 1) {
             const others = candidates.slice(1, 4)
               .map((c) => `${c.symbol} (${c.score})`).join(", ");
@@ -87,8 +98,8 @@ export function registerPrepare(program: Command): void {
       );
       await recordPrepared(root, symbol).catch(() => {});
       const withCandidates = candidates.length > 1
-        ? { ...r, candidates }
-        : r;
+        ? { ...r, candidates, ...(lowConfidence ? { low_confidence: true } : {}) }
+        : (lowConfidence ? { ...r, low_confidence: true } : r);
       if (opts.json) console.log(JSON.stringify(withCandidates, null, 2));
       else {
         console.log(r.markdown);

@@ -16,6 +16,23 @@ export interface SeedOptions {
   scanFiles?: string[];
 }
 
+/** Tier definitions for `dna init --seed`. Exposed here so they can be
+ * unit-tested without depending on the CLI package. The CLI re-exports
+ * these for its own use. */
+export type SeedTier = "safe" | "medium" | "aggressive";
+export const SEED_TIERS: readonly SeedTier[] = ["safe", "medium", "aggressive"] as const;
+export interface SeedTierConfig {
+  maxCommits: number;
+  maxPrs: number;
+  minConfidence: number;
+  sources: readonly SeedProposal["source"][];
+}
+export const SEED_TIER_DEFAULTS: Record<SeedTier, SeedTierConfig> = {
+  safe:       { maxCommits: 0,   maxPrs: 0,   minConfidence: 0.6, sources: ["todo"] },
+  medium:     { maxCommits: 100, maxPrs: 20,  minConfidence: 0.4, sources: ["todo", "git", "pr"] },
+  aggressive: { maxCommits: 500, maxPrs: 100, minConfidence: 0.2, sources: ["todo", "git", "pr", "incident"] },
+};
+
 /**
  * Mine git history (+ gh PRs when available) for proposed notes/decisions/invariants.
  * Pure read; emits proposals only — writing to .dna/ is up to the caller.

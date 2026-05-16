@@ -112,6 +112,7 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       const a = args as { symbol?: string; intent: string; budget?: number; since?: string; depth?: number };
       let symbol = a.symbol;
       let candidates: Array<{ symbol: string; score: number; via: string }> | undefined;
+      let lowConfidence = false;
       if (!symbol && a.intent) {
         const matches = await inferSymbols(root, a.intent, { limit: 5 });
         if (matches.length === 0) {
@@ -123,10 +124,13 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
           via: m.via,
         }));
         symbol = candidates[0]!.symbol;
+        const LOW_CONFIDENCE_THRESHOLD = 70;
+        lowConfidence = candidates.length === 1 && (candidates[0]!.score ?? 0) < LOW_CONFIDENCE_THRESHOLD;
       }
       if (!symbol) throw new Error("prepare_edit: symbol or intent required");
       const result = await prepareEdit({ symbol, intent: a.intent, budget: a.budget, since: a.since, depth: a.depth }, root);
-      return candidates && candidates.length > 1 ? { ...result, candidates } : result;
+      const withCandidates = candidates && candidates.length > 1 ? { ...result, candidates } : result;
+      return lowConfidence ? { ...withCandidates, low_confidence: true } : withCandidates;
     }
     case "get_context":
       return getContext(args as Parameters<typeof getContext>[0], root);
