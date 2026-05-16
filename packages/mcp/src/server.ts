@@ -421,7 +421,7 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
       return verifyIndex(index, { root, sample: a.sample });
     }
     case "gate_stream": {
-      const a = args as { since?: string; limit?: number };
+      const a = args as { since?: string; since_seq?: number; limit?: number };
       const entries = await readGateStream(root, a);
       return { entries };
     }

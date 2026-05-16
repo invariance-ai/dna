@@ -31,7 +31,11 @@ export async function changedHunks(root: string, base = "HEAD"): Promise<HunkRan
   }
 }
 
-const FILE_HEADER = /^\+\+\+ b\/(.+)$/;
+// Accept both standard git diff (`+++ b/path`) and `git diff --no-prefix`
+// (`+++ path`) forms. The `b/` prefix is optional; `/dev/null` (deletion of
+// the new-side file) is recognised and attributed to no file so deletions
+// don't get mis-credited to the previously-seen header.
+const FILE_HEADER = /^\+\+\+ (?:b\/)?(.+)$/;
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseUnifiedDiff(diff: string): HunkRange[] {
@@ -40,7 +44,11 @@ export function parseUnifiedDiff(diff: string): HunkRange[] {
   for (const line of diff.split("\n")) {
     const fh = FILE_HEADER.exec(line);
     if (fh) {
-      currentFile = fh[1];
+      const candidate = fh[1];
+      // `/dev/null` on the +++ side means the file was deleted — don't
+      // attribute subsequent hunks (there shouldn't be any) to it, and
+      // clear any previous file so we don't mis-attribute either.
+      currentFile = candidate === "/dev/null" ? undefined : candidate;
       continue;
     }
     const hh = HUNK_HEADER.exec(line);
@@ -57,6 +65,10 @@ export function parseUnifiedDiff(diff: string): HunkRange[] {
   }
   return hunks;
 }
+
+// TODO(FIX 5): hunk→symbol mapping currently only knows symbol *start*
+// lines (see symbolsInHunks heuristic below). Once the parser emits end
+// lines we can replace the ±1 fudge with a real range overlap test.
 
 export interface SymbolHit {
   qualified_name: string;

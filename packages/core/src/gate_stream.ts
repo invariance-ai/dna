@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
-import { watch } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
+import { createWriteStream, openSync, writeSync, closeSync, watch } from "node:fs";
+import type { WriteStream } from "node:fs";
 import path from "node:path";
 import { changedHunks, symbolsInHunks } from "./diff_to_symbols.js";
 import { gateIncremental, type GateResult } from "./gate.js";
@@ -13,8 +14,16 @@ import { loadConfig, scanFiles } from "./scan.js";
  *
  * Consumed by:
  *   - `dna gate --watch` (prints findings as they arrive)
- *   - the `gate_stream` MCP tool (tail since timestamp)
+ *   - the `gate_stream` MCP tool (tail since seq or timestamp)
  *   - agent hooks (PostToolUse → `dna gate --changed --json`)
+ *
+ * Concurrency note: hooks (one-shot writers) and a long-running `--watch`
+ * loop may write to the same JSONL concurrently. We rely on the POSIX
+ * guarantee that writes to a file opened O_APPEND that fit within PIPE_BUF
+ * (≥512 bytes per POSIX, 4096 on Linux, 512 on macOS) are atomic — so two
+ * processes appending small JSON lines won't tear. Each entry must stay
+ * under that bound; large hit lists could exceed it. If we ever produce
+ * larger entries, switch to an exclusive lockfile or chunked appends.
  */
 const REL = ".dna/cache/gate-stream.jsonl";
 
@@ -23,6 +32,8 @@ export function gateStreamPath(root: string): string {
 }
 
 export interface GateStreamEntry {
+  /** Monotonic per-file counter; preferred cursor for tailing. */
+  seq: number;
   ts: string;
   changed_files: string[];
   changed_symbols: string[];
@@ -32,7 +43,7 @@ export interface GateStreamEntry {
 
 export async function readGateStream(
   root: string,
-  opts: { since?: string; limit?: number } = {},
+  opts: { since?: string; since_seq?: number; limit?: number } = {},
 ): Promise<GateStreamEntry[]> {
   let raw: string;
   try {
@@ -44,18 +55,59 @@ export async function readGateStream(
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
-      entries.push(JSON.parse(line) as GateStreamEntry);
+      const parsed = JSON.parse(line) as Partial<GateStreamEntry>;
+      // backwards-compat: older entries without `seq` get 0
+      if (typeof parsed.seq !== "number") parsed.seq = 0;
+      entries.push(parsed as GateStreamEntry);
     } catch {
       // skip malformed
     }
   }
   let out = entries;
-  if (opts.since) {
+  if (typeof opts.since_seq === "number") {
+    const cutoff = opts.since_seq;
+    out = out.filter((e) => e.seq > cutoff);
+  } else if (opts.since) {
     const cutoff = new Date(opts.since).getTime();
     out = out.filter((e) => new Date(e.ts).getTime() > cutoff);
   }
   if (opts.limit) out = out.slice(-opts.limit);
   return out;
+}
+
+/**
+ * Read the maximum `seq` value currently persisted. Used by watchers to
+ * resume numbering after a restart so cursors remain monotonic.
+ */
+async function readMaxSeq(root: string): Promise<number> {
+  const entries = await readGateStream(root);
+  let max = 0;
+  for (const e of entries) if (e.seq > max) max = e.seq;
+  return max;
+}
+
+/**
+ * Append a single entry using a short-lived O_APPEND fd. Used by one-shot
+ * callers (hooks, `dna gate --changed`) where the cost of opening a fd is
+ * dwarfed by the gate evaluation itself. See concurrency note above.
+ */
+export async function appendGateStreamEntry(
+  root: string,
+  entry: Omit<GateStreamEntry, "seq"> & { seq?: number },
+): Promise<GateStreamEntry> {
+  const p = gateStreamPath(root);
+  await mkdir(path.dirname(p), { recursive: true });
+  const seq = entry.seq ?? (await readMaxSeq(root)) + 1;
+  const full: GateStreamEntry = { ...entry, seq };
+  const line = JSON.stringify(full) + "\n";
+  // openSync/writeSync/closeSync — O_APPEND atomic for writes < PIPE_BUF.
+  const fd = openSync(p, "a");
+  try {
+    writeSync(fd, line);
+  } finally {
+    closeSync(fd);
+  }
+  return full;
 }
 
 export interface WatchOptions {
@@ -86,6 +138,32 @@ export async function watchGateStream(
   const files = await scanFiles(root, config);
   const watched = new Set<string>(files);
 
+  // Linux's fs.watch does not implement { recursive: true }. We still
+  // register the watchers below (some kernels/libuv builds do support it
+  // for top-level only), but warn the user so they aren't surprised when
+  // edits in nested directories don't trigger a re-evaluation. Polling
+  // alternatives (chokidar) would be a follow-up; we deliberately don't
+  // add new deps in this PR.
+  if (process.platform === "linux") {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[dna gate --watch] Recursive fs.watch is not supported on Linux. " +
+        "Changes inside nested directories may not trigger re-evaluation. " +
+        "Run `dna gate --watch` from each package root, or rely on the " +
+        "PostToolUse hook (`dna gate --changed`) for full coverage.",
+    );
+  }
+
+  // Long-lived O_APPEND stream — see concurrency note at top of file.
+  // Reusing one stream avoids the per-entry open/close cost while keeping
+  // writes atomic for entries that fit within PIPE_BUF.
+  await mkdir(path.dirname(gateStreamPath(root)), { recursive: true });
+  const stream: WriteStream = createWriteStream(gateStreamPath(root), {
+    flags: "a",
+  });
+
+  let seqCounter = await readMaxSeq(root);
+
   let timer: NodeJS.Timeout | undefined;
   let pending = new Set<string>();
 
@@ -100,15 +178,16 @@ export async function watchGateStream(
       touched_symbols: symbols.map((s) => s.qualified_name),
     });
     if (result.hits.length === 0) return;
+    seqCounter += 1;
     const entry: GateStreamEntry = {
+      seq: seqCounter,
       ts: new Date().toISOString(),
       changed_files: result.changed_files,
       changed_symbols: result.changed_symbols,
       hits: result.hits,
       blocking: result.blocking,
     };
-    await mkdir(path.dirname(gateStreamPath(root)), { recursive: true });
-    await appendFile(gateStreamPath(root), JSON.stringify(entry) + "\n");
+    stream.write(JSON.stringify(entry) + "\n");
     opts.onEntry?.(entry);
   }
 
@@ -154,6 +233,11 @@ export async function watchGateStream(
           // ignore
         }
       }
+      try {
+        stream.end();
+      } catch {
+        // ignore
+      }
     },
   };
 }
@@ -173,5 +257,3 @@ export async function gateChanged(
     touched_symbols: symbols.map((s) => s.qualified_name),
   });
 }
-
-void stat; // keep the import group; stat reserved for future cache invalidation
