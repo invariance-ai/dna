@@ -109,6 +109,29 @@ const KEYWORDS = new Set([
 ]);
 
 export async function parseFile(filePath: string): Promise<ParsedFile> {
+  if (process.env.DNA_PARSER !== "regex") {
+    const ext = path.extname(filePath);
+    if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx" ||
+        ext === ".mjs" || ext === ".cjs" || ext === ".py") {
+      try {
+        const { parseFileTS } = await import("./parser_ts.js");
+        return await parseFileTS(filePath);
+      } catch (err) {
+        if (process.env.DNA_PARSER === "tree-sitter") throw err;
+        // best-effort fallback to regex; warn once per process
+        if (!warnedFallback) {
+          warnedFallback = true;
+          console.error(`dna: tree-sitter parser unavailable (${(err as Error).message}); falling back to regex. Set DNA_PARSER=regex to silence.`);
+        }
+      }
+    }
+  }
+  return parseFileRegex(filePath);
+}
+
+let warnedFallback = false;
+
+async function parseFileRegex(filePath: string): Promise<ParsedFile> {
   const src = await readFile(filePath, "utf8");
   const ext = path.extname(filePath);
   const language: ParsedFile["language"] = LANGUAGE_BY_EXT[ext] ?? "typescript";

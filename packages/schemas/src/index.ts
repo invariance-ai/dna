@@ -26,6 +26,9 @@ export const SymbolRef = z.object({
 });
 export type SymbolRef = z.infer<typeof SymbolRef>;
 
+export const ResolutionStatus = z.enum(["exact", "name-only", "unresolved"]);
+export type ResolutionStatus = z.infer<typeof ResolutionStatus>;
+
 export const Edge = z.object({
   type: z.enum([
     "calls",
@@ -40,6 +43,7 @@ export const Edge = z.object({
     "implements",
   ]),
   target: SymbolRef,
+  resolution_status: ResolutionStatus.optional(),
 });
 export type Edge = z.infer<typeof Edge>;
 
