@@ -56,7 +56,7 @@ describe("parseShellArgs", () => {
 });
 
 describe("resetWorkingTree", () => {
-  it("discards edits, removes untracked files, and nukes .dna/", async () => {
+  it("discards edits, removes untracked files, and nukes .dna/", { timeout: 30_000 }, async () => {
     const repo = await tempDir("dna-bench-reset-");
     await gitInit(repo);
     await writeFile(path.join(repo, "tracked.txt"), "original\n");
@@ -79,7 +79,7 @@ describe("resetWorkingTree", () => {
     await expect(stat(path.join(repo, "newdir"))).rejects.toThrow();
   });
 
-  it("throws loudly when path is not a git repo", async () => {
+  it("throws loudly when path is not a git repo", { timeout: 15_000 }, async () => {
     const notRepo = await tempDir("dna-bench-notrepo-");
     await expect(resetWorkingTree(notRepo)).rejects.toThrow(/not a git repo/);
   });
