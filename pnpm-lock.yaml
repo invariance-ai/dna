@@ -56,6 +56,9 @@ importers:
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
+      web-tree-sitter:
+        specifier: ^0.26.8
+        version: 0.26.8
       yaml:
         specifier: ^2.5.0
         version: 2.9.0
@@ -1191,6 +1194,9 @@ packages:
       jsdom:
         optional: true
 
+  web-tree-sitter@0.26.8:
+    resolution: {integrity: sha512-4sUwi7ZyOrIk5KLgYLkc2A/F0LFMQnBhfb+2Cdl7ik4ePJ6JD+fk4ofI2sA5eGawBKBaK4Vntt7Ww5KcEsay4A==}
+
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
@@ -2183,6 +2189,8 @@ snapshots:
       - sugarss
       - supports-color
       - terser
+
+  web-tree-sitter@0.26.8: {}
 
   which@2.0.2:
     dependencies:

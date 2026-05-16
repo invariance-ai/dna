@@ -109,6 +109,45 @@ const KEYWORDS = new Set([
 ]);
 
 export async function parseFile(filePath: string): Promise<ParsedFile> {
+  if (process.env.DNA_PARSER !== "regex") {
+    const ext = path.extname(filePath);
+    if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx" ||
+        ext === ".mjs" || ext === ".cjs" || ext === ".py") {
+      try {
+        const { parseFileTS } = await import("./parser_ts.js");
+        return await parseFileTS(filePath);
+      } catch (err) {
+        if (process.env.DNA_PARSER === "tree-sitter") throw err;
+        // best-effort fallback to regex; warn once per process, count the rest
+        parserFallbackCount++;
+        if (!warnedFallback) {
+          warnedFallback = true;
+          parserFallbackFirstError = (err as Error).message;
+          console.error(`dna: tree-sitter parser unavailable (${parserFallbackFirstError}); falling back to regex. Set DNA_PARSER=regex to silence.`);
+        }
+      }
+    }
+  }
+  return parseFileRegex(filePath);
+}
+
+let warnedFallback = false;
+let parserFallbackCount = 0;
+let parserFallbackFirstError: string | null = null;
+
+/**
+ * Log a one-line summary if tree-sitter ever fell back to regex during this
+ * process. Callers (e.g. the `index` command) invoke this at end-of-run so
+ * silent fallbacks don't hide a misconfigured install.
+ */
+export function reportParserFallbacks(): { count: number; firstError: string | null } {
+  if (parserFallbackCount > 1) {
+    console.error(`dna: tree-sitter fell back to regex for ${parserFallbackCount} files this run.`);
+  }
+  return { count: parserFallbackCount, firstError: parserFallbackFirstError };
+}
+
+async function parseFileRegex(filePath: string): Promise<ParsedFile> {
   const src = await readFile(filePath, "utf8");
   const ext = path.extname(filePath);
   const language: ParsedFile["language"] = LANGUAGE_BY_EXT[ext] ?? "typescript";

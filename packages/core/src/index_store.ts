@@ -26,6 +26,7 @@ export interface DnaIndex {
     type: "calls";
     file?: string;
     line?: number;
+    resolution_status?: "exact" | "name-only" | "unresolved";
   }>;
 }
 
@@ -155,6 +156,7 @@ export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
         type: "calls",
         file: relFile,
         line: cs.line,
+        resolution_status: "name-only",
       });
     }
   }
