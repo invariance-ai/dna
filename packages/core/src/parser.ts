@@ -21,11 +21,26 @@ export type ParsedLanguage =
   | "ruby"
   | "csharp";
 
+export interface ImportBinding {
+  /** Local name as visible inside this file. */
+  local: string;
+  /** Module specifier as written in source (e.g. "./refunds", "@app/foo"). */
+  source: string;
+  /** Imported name in the source module; undefined for namespace imports. */
+  imported?: string;
+  /** Kind of binding. "default" means the source module's default export. */
+  kind: "named" | "default" | "namespace";
+}
+
 export interface ParsedFile {
   path: string;
   language: ParsedLanguage;
   symbols: SymbolRef[];
   call_sites: Array<{ callee_name: string; line: number; from: string }>;
+  /** Import bindings observed in this file (TS/JS/Py only for v0.2). */
+  imports?: ImportBinding[];
+  /** Re-exports: names this file re-exports from other modules. */
+  re_exports?: Array<{ local?: string; exported: string; source: string }>;
 }
 
 const TS_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [

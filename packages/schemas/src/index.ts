@@ -26,7 +26,22 @@ export const SymbolRef = z.object({
 });
 export type SymbolRef = z.infer<typeof SymbolRef>;
 
-export const ResolutionStatus = z.enum(["exact", "name-only", "unresolved"]);
+/**
+ * Edge confidence, ordered most-to-least trustworthy:
+ *   exact      — resolved via import binding + symbol table; same file or
+ *                resolved module path; we know the exact target symbol.
+ *   typed      — confirmed by an external type oracle (tsserver / pyright).
+ *   heuristic  — name-matched against the symbol index (current regex behavior).
+ *   unresolved — callee identified but no candidate target found.
+ *   name-only  — legacy label for v0.1 regex graph; same semantics as heuristic.
+ */
+export const ResolutionStatus = z.enum([
+  "exact",
+  "typed",
+  "heuristic",
+  "unresolved",
+  "name-only",
+]);
 export type ResolutionStatus = z.infer<typeof ResolutionStatus>;
 
 export const Edge = z.object({
