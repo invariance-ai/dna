@@ -102,7 +102,7 @@ export function registerWizard(program: Command): void {
         const config = await loadConfig(root);
         const files = await scanFiles(root, config);
         const parsed = await Promise.all(files.map((f) => parseFile(f)));
-        const index = buildIndex(root, parsed);
+        const index = await buildIndex(root, parsed);
         await writeIndex(root, index);
         step("indexed", `${index.symbols.length} symbols, ${index.edges.length} edges, ${files.length} files`);
       } else {
