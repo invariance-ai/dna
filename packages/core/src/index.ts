@@ -50,3 +50,5 @@ export * from "./verify_index.js";
 export * from "./diff_to_symbols.js";
 export * from "./gate_stream.js";
 export * from "./validate_knowledge.js";
+export { runBench, runTask, loadTasks, summarize, resetWorkingTree, parseShellArgs } from "./bench.js";
+export type { BenchTask, RunResult, BenchSummary, RunOptions } from "./bench.js";
