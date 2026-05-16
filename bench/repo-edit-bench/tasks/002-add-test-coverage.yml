@@ -1,0 +1,9 @@
+repo: examples/multi-symbol
+prompt: |
+  The createRefund function has no tests. Add a vitest spec that covers
+  the happy path and the high-value-without-approval failure case.
+checks:
+  - "test -f src/refunds.test.ts || test -f tests/refunds.test.ts"
+  - "grep -q 'createRefund' src/refunds.test.ts tests/refunds.test.ts 2>/dev/null"
+invariants_expected:
+  - High-value refunds require approval

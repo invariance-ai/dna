@@ -1,0 +1,8 @@
+repo: examples/multi-symbol
+prompt: |
+  Rename `createRefund` to `issueRefund` across the codebase. Update all
+  callers and tests. Do not leave a backward-compat alias.
+checks:
+  - "! grep -r 'createRefund' src/ 2>/dev/null"
+  - "grep -q 'issueRefund' src/refunds.ts"
+invariants_expected: []

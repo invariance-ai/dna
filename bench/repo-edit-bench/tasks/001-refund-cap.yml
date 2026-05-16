@@ -1,0 +1,9 @@
+repo: examples/multi-symbol
+prompt: |
+  Add a $5000 cap to refunds for non-enterprise customers. Touch only the
+  refund handler. Don't introduce a new helper if an existing one fits.
+checks:
+  - "grep -q '5000' src/refunds.ts"
+  - "pnpm -s test 2>/dev/null || true"
+invariants_expected:
+  - High-value refunds require approval
