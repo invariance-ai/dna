@@ -6,6 +6,7 @@ import {
   parseFile,
   buildIndex,
   writeIndex,
+  reportParserFallbacks,
 } from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
@@ -23,6 +24,7 @@ export function registerIndex(program: Command): void {
       const parsed = await Promise.all(files.map((f) => parseFile(f)));
       const index = buildIndex(root, parsed);
       await writeIndex(root, index);
+      reportParserFallbacks();
       const ms = Date.now() - t0;
       if (opts.quiet) return;
       process.stdout.write("\r" + " ".repeat(40) + "\r");

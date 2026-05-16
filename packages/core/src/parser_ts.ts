@@ -44,6 +44,10 @@ const GRAMMAR_BY_EXT: Record<string, string> = {
 
 let parserInitPromise: Promise<void> | null = null;
 const languageCache = new Map<string, Promise<Language>>();
+// Pool one Parser per grammar. Cheaper than new+delete per file, and safe
+// because parseFileTS is awaited end-to-end (no concurrent use of one parser
+// within a single call). Parser.parse is synchronous after setLanguage.
+const parserPool = new Map<string, Parser>();
 
 async function ensureParserInit(): Promise<void> {
   if (!parserInitPromise) parserInitPromise = Parser.init();
@@ -59,6 +63,17 @@ async function loadLanguage(grammar: string): Promise<Language> {
   return p;
 }
 
+async function getParser(grammar: string): Promise<Parser> {
+  let parser = parserPool.get(grammar);
+  if (!parser) {
+    const lang = await loadLanguage(grammar);
+    parser = new Parser();
+    parser.setLanguage(lang);
+    parserPool.set(grammar, parser);
+  }
+  return parser;
+}
+
 export async function parseFileTS(filePath: string): Promise<ParsedFile> {
   const ext = path.extname(filePath);
   const grammar = GRAMMAR_BY_EXT[ext];
@@ -69,14 +84,11 @@ export async function parseFileTS(filePath: string): Promise<ParsedFile> {
     : "typescript";
 
   await ensureParserInit();
-  const lang = await loadLanguage(grammar);
-  const parser = new Parser();
-  parser.setLanguage(lang);
+  const parser = await getParser(grammar);
 
   const src = await readFile(filePath, "utf8");
   const tree = parser.parse(src);
   if (!tree) {
-    parser.delete();
     throw new Error(`tree-sitter: parse returned null for ${filePath}`);
   }
 
@@ -91,7 +103,6 @@ export async function parseFileTS(filePath: string): Promise<ParsedFile> {
   }
 
   tree.delete();
-  parser.delete();
   return { path: filePath, language, symbols, call_sites };
 }
 
