@@ -276,7 +276,7 @@ function extractTsImports(
     if (c.type === "import_statement") {
       const source = stringLiteralText(c.childForFieldName("source"));
       if (!source) continue;
-      const clause = c.namedChildren.find((n) => n?.type === "import_clause");
+      const clause = c.namedChildren.find((n: Node | null) => n?.type === "import_clause");
       if (!clause) {
         // side-effect import; skip
         continue;
@@ -286,7 +286,7 @@ function extractTsImports(
         if (part.type === "identifier") {
           imports.push({ local: part.text, source, kind: "default" });
         } else if (part.type === "namespace_import") {
-          const id = part.namedChildren.find((n) => n?.type === "identifier");
+          const id = part.namedChildren.find((n: Node | null) => n?.type === "identifier");
           if (id) imports.push({ local: id.text, source, kind: "namespace" });
         } else if (part.type === "named_imports") {
           for (const spec of part.namedChildren) {
@@ -301,7 +301,7 @@ function extractTsImports(
     } else if (c.type === "export_statement") {
       const source = stringLiteralText(c.childForFieldName("source"));
       if (!source) continue; // not a re-export
-      const named = c.namedChildren.find((n) => n?.type === "export_clause");
+      const named = c.namedChildren.find((n: Node | null) => n?.type === "export_clause");
       if (named) {
         for (const spec of named.namedChildren) {
           if (!spec || spec.type !== "export_specifier") continue;

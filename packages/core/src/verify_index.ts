@@ -293,6 +293,13 @@ function lastNameOf(qualified: string): string {
 }
 
 function guessTargetFile(index: DnaIndex, edge: DnaIndex["edges"][number]): string {
+  // Prefer the stable id — edges record `to_id` precisely so we can identify
+  // the actual resolved target without falling back to name-only lookup, which
+  // would pick an arbitrary same-name symbol when collisions exist.
+  if (edge.to_id) {
+    const byId = index.symbols.find((s) => s.id === edge.to_id);
+    if (byId) return byId.file;
+  }
   const target = index.symbols.find((s) => (s.qualified_name ?? s.name) === edge.to);
   return target?.file ?? "?";
 }

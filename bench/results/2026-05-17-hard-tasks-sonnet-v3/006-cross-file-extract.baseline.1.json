@@ -1,0 +1,11 @@
+{
+  "task_id": "006-cross-file-extract",
+  "arm": "baseline",
+  "attempt": 1,
+  "agent_label": "sonnet",
+  "passed": true,
+  "failed_checks": [],
+  "duration_sec": 72.475,
+  "output_chars": 505,
+  "timed_out": false
+}

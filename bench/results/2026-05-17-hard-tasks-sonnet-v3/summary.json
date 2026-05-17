@@ -1,0 +1,89 @@
+{
+  "tasks": 3,
+  "attempts_per_arm": 3,
+  "agents": [
+    "sonnet"
+  ],
+  "baseline": {
+    "agent_label": "all",
+    "arm": "baseline",
+    "attempts": 9,
+    "passes": 7,
+    "pass_rate": 0.7777777777777778,
+    "pass_rate_ci": {
+      "low": 0.4525833436728054,
+      "high": 0.9367762376877727
+    },
+    "mean_duration_sec": 46.57622222222222,
+    "mean_output_chars": 450.55555555555554,
+    "timed_out": 0
+  },
+  "dna": {
+    "agent_label": "all",
+    "arm": "dna",
+    "attempts": 9,
+    "passes": 7,
+    "pass_rate": 0.7777777777777778,
+    "pass_rate_ci": {
+      "low": 0.4525833436728054,
+      "high": 0.9367762376877727
+    },
+    "mean_duration_sec": 39.62733333333333,
+    "mean_output_chars": 372.3333333333333,
+    "timed_out": 0
+  },
+  "cells": [
+    {
+      "agent_label": "sonnet",
+      "arm": "baseline",
+      "attempts": 9,
+      "passes": 7,
+      "pass_rate": 0.7777777777777778,
+      "pass_rate_ci": {
+        "low": 0.4525833436728054,
+        "high": 0.9367762376877727
+      },
+      "mean_duration_sec": 46.57622222222222,
+      "mean_output_chars": 450.55555555555554,
+      "timed_out": 0
+    },
+    {
+      "agent_label": "sonnet",
+      "arm": "dna",
+      "attempts": 9,
+      "passes": 7,
+      "pass_rate": 0.7777777777777778,
+      "pass_rate_ci": {
+        "low": 0.4525833436728054,
+        "high": 0.9367762376877727
+      },
+      "mean_duration_sec": 39.62733333333333,
+      "mean_output_chars": 372.3333333333333,
+      "timed_out": 0
+    }
+  ],
+  "per_task": [
+    {
+      "agent_label": "sonnet",
+      "task_id": "004-hidden-caller",
+      "baseline_pass": 1,
+      "dna_pass": 1,
+      "delta": 0
+    },
+    {
+      "agent_label": "sonnet",
+      "task_id": "005-invariant-respect",
+      "baseline_pass": 0.3333333333333333,
+      "dna_pass": 0.3333333333333333,
+      "delta": 0
+    },
+    {
+      "agent_label": "sonnet",
+      "task_id": "006-cross-file-extract",
+      "baseline_pass": 1,
+      "dna_pass": 1,
+      "delta": 0
+    }
+  ],
+  "warnings": []
+}

@@ -44,14 +44,16 @@ jobs:
           pnpm bench:perf --corpus self --json bench/perf/results/current.json --out bench/perf/results/current.md
 
       - name: Run verify-index → JSON
+        id: verify_index
         run: |
-          set -uo pipefail
-          # verify-index requires an indexed root. bench:perf already indexed
-          # the cwd, so .dna/ exists. verify-index exits non-zero when precision
-          # is below the configured threshold; that's the gate, not a step failure
-          # — the next step (compare-verify) is what enforces regressions.
+          set +e
+          # verify-index requires an indexed root (bench:perf already built it).
+          # Exits non-zero when precision/recall/coverage fall below the thresholds
+          # in .dna/config.yml; absolute-threshold enforcement runs here, while
+          # baseline-regression enforcement runs in the next compare-verify step.
           node packages/cli/dist/index.js verify-index --sample 200 --seed 42 --json --no-cache \
-            > bench/perf/results/verify-current.json || true
+            > bench/perf/results/verify-current.json
+          echo "verify_index_exit=$?" >> "$GITHUB_OUTPUT"
           test -s bench/perf/results/verify-current.json
 
       - name: Compare perf thresholds
@@ -122,8 +124,9 @@ jobs:
           set -e
           perf_exit="${{ steps.perf_compare.outputs.perf_exit }}"
           verify_exit="${{ steps.verify_compare.outputs.verify_exit }}"
-          echo "perf_exit=${perf_exit}  verify_exit=${verify_exit}"
-          if [ "${perf_exit}" != "0" ] || [ "${verify_exit}" != "0" ]; then
-            echo "::error::perf gate failed (perf=${perf_exit} verify=${verify_exit})"
+          verify_index_exit="${{ steps.verify_index.outputs.verify_index_exit }}"
+          echo "perf_exit=${perf_exit}  verify_exit=${verify_exit}  verify_index_exit=${verify_index_exit}"
+          if [ "${perf_exit}" != "0" ] || [ "${verify_exit}" != "0" ] || [ "${verify_index_exit}" != "0" ]; then
+            echo "::error::perf gate failed (perf=${perf_exit} verify=${verify_exit} verify_index=${verify_index_exit})"
             exit 1
           fi
