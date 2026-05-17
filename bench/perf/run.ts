@@ -5,14 +5,22 @@ import { indexCorpus } from "./run-index.js";
 import { runQueries, runFiveQueryTask } from "./run-queries.js";
 import { renderMarkdown, type CorpusReport } from "./report.js";
 
-function parseArgs(argv: string[]): { corpora: string[]; out: string } {
+interface Args {
+  corpora: string[];
+  out: string;
+  jsonOut: string;
+}
+
+function parseArgs(argv: string[]): Args {
   const args = argv.slice(2);
   let corpora: string[] = [];
   let out = "";
+  let jsonOut = "";
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--corpus" || a === "-c") corpora.push(args[++i]);
     else if (a === "--out") out = args[++i];
+    else if (a === "--json") jsonOut = args[++i];
     else if (a === "--all") corpora = Object.keys(CORPORA);
   }
   if (corpora.length === 0) corpora = ["flask"];
@@ -20,21 +28,30 @@ function parseArgs(argv: string[]): { corpora: string[]; out: string } {
     const date = new Date().toISOString().slice(0, 10);
     out = path.join("bench/perf/results", `${date}.md`);
   }
-  return { corpora, out };
+  return { corpora, out, jsonOut };
+}
+
+/**
+ * Resolve a corpus name to a filesystem root.
+ * `self` means "this repo" — handy for CI perf gates that don't want to
+ * clone an external corpus on every PR.
+ */
+async function resolveRoot(name: string): Promise<string> {
+  if (name === "self") return process.cwd();
+  const c: Corpus | undefined = CORPORA[name];
+  if (!c) {
+    throw new Error(`unknown corpus: ${name}. known: self, ${Object.keys(CORPORA).join(", ")}`);
+  }
+  return ensureCorpus(c);
 }
 
 async function main(): Promise<void> {
-  const { corpora, out } = parseArgs(process.argv);
+  const { corpora, out, jsonOut } = parseArgs(process.argv);
   const reports: CorpusReport[] = [];
 
   for (const name of corpora) {
-    const c: Corpus | undefined = CORPORA[name];
-    if (!c) {
-      console.error(`unknown corpus: ${name}. known: ${Object.keys(CORPORA).join(", ")}`);
-      process.exit(2);
-    }
     console.log(`\n=== ${name} ===`);
-    const root = await ensureCorpus(c);
+    const root = await resolveRoot(name);
     console.log(`  corpus at ${root}`);
 
     console.log(`  indexing…`);
@@ -57,6 +74,24 @@ async function main(): Promise<void> {
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, renderMarkdown(reports));
   console.log(`\nwrote ${out}`);
+
+  if (jsonOut) {
+    await mkdir(path.dirname(jsonOut), { recursive: true });
+    const payload = {
+      version: 1 as const,
+      generated_at: new Date().toISOString(),
+      node: process.version,
+      corpora: reports.map((r) => ({
+        corpus: r.corpus,
+        index: r.index,
+        queries: r.queries,
+        five_query_tokens: r.five_query_tokens,
+        five_query_ms: r.five_query_ms,
+      })),
+    };
+    await writeFile(jsonOut, JSON.stringify(payload, null, 2) + "\n");
+    console.log(`wrote ${jsonOut}`);
+  }
 }
 
 main().catch((e) => {

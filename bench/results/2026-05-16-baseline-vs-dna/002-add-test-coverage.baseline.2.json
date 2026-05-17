@@ -1,0 +1,13 @@
+{
+  "task_id": "002-add-test-coverage",
+  "arm": "baseline",
+  "attempt": 2,
+  "passed": false,
+  "failed_checks": [
+    "test -f src/refunds.test.ts || test -f tests/refunds.test.ts",
+    "grep -q 'createRefund' src/refunds.test.ts tests/refunds.test.ts 2>/dev/null"
+  ],
+  "duration_sec": 18.781,
+  "output_chars": 225,
+  "timed_out": false
+}

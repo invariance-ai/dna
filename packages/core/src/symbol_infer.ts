@@ -14,6 +14,20 @@ export interface SymbolMatch {
   via: "exact" | "qualified" | "feature";
 }
 
+// Common English filler that should never count as a symbol candidate.
+// Kept small — the score threshold filters noise, so this only needs to
+// suppress words that *do* collide with common symbol names in the wild.
+const LOWERCASE_STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "into", "that", "this", "these", "those",
+  "when", "where", "what", "which", "while", "after", "before", "should", "would",
+  "could", "must", "will", "shall", "have", "been", "make", "made", "does", "doing",
+  "code", "file", "line", "data", "type", "object", "string", "number", "value",
+  "function", "method", "class", "module", "import", "export", "return", "async",
+  "await", "true", "false", "null", "undefined", "void",
+  "add", "remove", "update", "change", "fix", "use", "using", "used", "call", "run",
+  "test", "tests", "case", "cases", "feature", "support",
+]);
+
 function extractCandidates(text: string): string[] {
   const out = new Set<string>();
   const add = (tok: string | undefined): void => {
@@ -27,6 +41,14 @@ function extractCandidates(text: string): string[] {
   for (const m of text.matchAll(/\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*)\b/g)) add(m[1]);
   for (const m of text.matchAll(/\b([a-z][a-z0-9]+(?:[A-Z][a-z0-9]+)+)\b/g)) add(m[1]);
   for (const m of text.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){1,4})\b/g)) add(m[1]);
+  // Lowercase whole-word tokens (≥4 chars). Lets natural-language intents like
+  // "add caching to refunds" match symbols `cache`, `refund`, `Refunds.cache`.
+  // Filler is suppressed via LOWERCASE_STOPWORDS; remaining noise is filtered
+  // by the scoreMatch threshold.
+  for (const m of text.matchAll(/\b([a-z][a-z0-9_]{3,})\b/g)) {
+    const tok = m[1];
+    if (tok && !LOWERCASE_STOPWORDS.has(tok)) add(tok);
+  }
   return Array.from(out).filter((t) => !STOPWORDS.has(t));
 }
 

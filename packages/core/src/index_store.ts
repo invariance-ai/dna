@@ -2,6 +2,8 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { SymbolRef } from "@invariance/dna-schemas";
 import type { ParsedFile } from "./parser.js";
+import { buildResolver, type Resolver } from "./resolver.js";
+import { stableSymbolId } from "./symbol_id.js";
 
 /**
  * v0.1 storage: a single JSON file at .dna/index/symbols.json.
@@ -26,6 +28,7 @@ export interface DnaIndex {
     type: "calls";
     file?: string;
     line?: number;
+    resolution_status?: "exact" | "typed" | "heuristic" | "unresolved" | "name-only";
   }>;
 }
 
@@ -117,18 +120,25 @@ export async function staleFiles(root: string, index: DnaIndex): Promise<StaleRe
   };
 }
 
-export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
+export async function buildIndex(root: string, parsed: ParsedFile[]): Promise<DnaIndex> {
   const symbols: SymbolRef[] = [];
   const byName = new Map<string, SymbolRef[]>();
   const byQualifiedName = new Map<string, SymbolRef>();
   const byFileAndName = new Map<string, SymbolRef[]>();
+  // Map of absFile → relativized SymbolRef[] so the resolver's responses
+  // can be re-keyed to the rel-file convention used in the persisted index.
+  const relByAbs = new Map<string, Map<string, SymbolRef>>();
+
   for (const file of parsed) {
+    const absFile = file.path;
+    const relFile = path.relative(root, absFile);
+    const fileMap = new Map<string, SymbolRef>();
+    relByAbs.set(absFile, fileMap);
     for (const s of file.symbols) {
-      const relFile = path.relative(root, s.file);
       const qualified_name = s.qualified_name ?? s.name;
       const rel: SymbolRef = {
         ...s,
-        id: symbolId(relFile, qualified_name, s.line),
+        id: stableSymbolId({ file: relFile, qualifiedName: qualified_name, body: `${qualified_name}:${s.line}` }),
         qualified_name,
         file: relFile,
       };
@@ -136,17 +146,50 @@ export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
       push(byName, rel.name, rel);
       push(byFileAndName, `${rel.file}:${rel.name}`, rel);
       if (!byQualifiedName.has(qualified_name)) byQualifiedName.set(qualified_name, rel);
+      fileMap.set(rel.name, rel);
+      const tail = qualified_name.split(".").pop()!;
+      if (!fileMap.has(tail)) fileMap.set(tail, rel);
     }
   }
 
+  const resolver: Resolver = await buildResolver(parsed, { root });
+
   const edges: DnaIndex["edges"] = [];
   for (const file of parsed) {
-    const relFile = path.relative(root, file.path);
+    const absFile = file.path;
+    const relFile = path.relative(root, absFile);
     for (const cs of file.call_sites) {
       if (cs.from === "<module>" || cs.from === cs.callee_name) continue;
       const from = resolveLocalSymbol(relFile, cs.from, byFileAndName, byQualifiedName, byName);
-      const to = resolveLocalSymbol(relFile, cs.callee_name, byFileAndName, byQualifiedName, byName);
-      if (!from || !to) continue; // skip externals/built-ins/ambiguous globals
+      if (!from) continue;
+
+      // Try the resolver first (import-graph aware) for "exact".
+      const resolved = resolver.resolveCall(absFile, cs.callee_name);
+      let to: SymbolRef | undefined;
+      let status: NonNullable<DnaIndex["edges"][number]["resolution_status"]> = "unresolved";
+      if (resolved.status === "exact" && resolved.target) {
+        const targetAbs = resolved.target.file;
+        const targetMap = relByAbs.get(targetAbs);
+        to = targetMap?.get(resolved.target.name);
+        if (to) status = "exact";
+      }
+      // Qualified callee (e.g. "Foo.bar" from this.bar()/self.bar() handlers)
+      // resolves precisely via byQualifiedName — the class+method pair is
+      // unambiguous in the same file. Mark "exact", not "heuristic".
+      if (!to && cs.callee_name.includes(".")) {
+        const q = byQualifiedName.get(cs.callee_name);
+        if (q) {
+          to = q;
+          status = "exact";
+        }
+      }
+      // Fall back to heuristic name match.
+      if (!to) {
+        to = resolveLocalSymbol(relFile, cs.callee_name, byFileAndName, byQualifiedName, byName);
+        if (to) status = "heuristic";
+      }
+      if (!to) continue; // skip externals/built-ins/ambiguous globals
+
       edges.push({
         from: from.qualified_name ?? from.name,
         to: to.qualified_name ?? to.name,
@@ -155,6 +198,7 @@ export function buildIndex(root: string, parsed: ParsedFile[]): DnaIndex {
         type: "calls",
         file: relFile,
         line: cs.line,
+        resolution_status: status,
       });
     }
   }

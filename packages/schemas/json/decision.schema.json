@@ -56,6 +56,15 @@
         },
         "verified_at": {
           "type": "string"
+        },
+        "anchor_id": {
+          "type": "string"
+        },
+        "source_commit": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string"
         }
       },
       "required": [

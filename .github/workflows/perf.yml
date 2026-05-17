@@ -1,0 +1,129 @@
+name: perf
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - "**/*.md"
+      - "bench/dogfood/**"
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same PR — only the latest commit matters.
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  perf-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm version is read from the root package.json `packageManager` field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Run bench:perf on self corpus → JSON
+        run: |
+          set -euo pipefail
+          mkdir -p bench/perf/results
+          # Pre-warm once so JIT / fs caches don't pollute the measured run.
+          pnpm bench:perf --corpus self --json /tmp/perf-warmup.json --out /tmp/perf-warmup.md > /dev/null
+          pnpm bench:perf --corpus self --json bench/perf/results/current.json --out bench/perf/results/current.md
+
+      - name: Run verify-index → JSON
+        run: |
+          set -uo pipefail
+          # verify-index requires an indexed root. bench:perf already indexed
+          # the cwd, so .dna/ exists. verify-index exits non-zero when precision
+          # is below the configured threshold; that's the gate, not a step failure
+          # — the next step (compare-verify) is what enforces regressions.
+          node packages/cli/dist/index.js verify-index --sample 200 --seed 42 --json --no-cache \
+            > bench/perf/results/verify-current.json || true
+          test -s bench/perf/results/verify-current.json
+
+      - name: Compare perf thresholds
+        id: perf_compare
+        run: |
+          set +e
+          tsx bench/perf/compare-thresholds.ts \
+            --baseline bench/baselines/perf-self.json \
+            --current bench/perf/results/current.json \
+            --md-out bench/perf/results/perf-report.md
+          echo "perf_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Compare verify thresholds
+        id: verify_compare
+        run: |
+          set +e
+          tsx bench/perf/compare-verify.ts \
+            --baseline bench/baselines/verify-index-self.json \
+            --current bench/perf/results/verify-current.json \
+            --md-out bench/perf/results/verify-report.md
+          echo "verify_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble PR comment
+        run: |
+          {
+            echo "<!-- dna-perf-gates -->"
+            echo "# DNA perf gates"
+            echo ""
+            cat bench/perf/results/perf-report.md
+            echo ""
+            cat bench/perf/results/verify-report.md
+            echo ""
+            echo "_Baselines: \`bench/baselines/perf-self.json\`, \`bench/baselines/verify-index-self.json\`. Update them in a PR if a regression is intentional._"
+          } > bench/perf/results/pr-comment.md
+          cat bench/perf/results/pr-comment.md
+
+      - name: Upload perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: bench/perf/results/
+
+      - name: Post / update PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          marker="<!-- dna-perf-gates -->"
+          body=$(cat bench/perf/results/pr-comment.md)
+          # Find an existing comment with our marker and edit it; else create.
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1 || true)
+          if [ -n "${existing}" ]; then
+            gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" \
+              -f body="${body}" > /dev/null
+            echo "updated comment ${existing}"
+          else
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body "${body}"
+            echo "posted new comment"
+          fi
+
+      - name: Enforce gate exit codes
+        run: |
+          set -e
+          perf_exit="${{ steps.perf_compare.outputs.perf_exit }}"
+          verify_exit="${{ steps.verify_compare.outputs.verify_exit }}"
+          echo "perf_exit=${perf_exit}  verify_exit=${verify_exit}"
+          if [ "${perf_exit}" != "0" ] || [ "${verify_exit}" != "0" ]; then
+            echo "::error::perf gate failed (perf=${perf_exit} verify=${verify_exit})"
+            exit 1
+          fi

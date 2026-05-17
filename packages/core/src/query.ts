@@ -356,13 +356,19 @@ export async function prepareEdit(
   args: PrepareEditInput,
   ctxOrRoot: QueryContext | string,
 ): Promise<PrepareEditResult> {
+  // Symbol is optional in the wire schema (intent-only briefs infer it at
+  // the CLI/MCP boundary). By the time we reach prepareEdit it must be set.
+  if (!args.symbol) {
+    throw new Error("prepareEdit: symbol is required (resolve intent → symbol before calling)");
+  }
+  const symbol = args.symbol;
   const ctx = typeof ctxOrRoot === "string" ? await open(ctxOrRoot) : ctxOrRoot;
   // prepareEdit already runs its own packByBudget on the markdown wrapper; ask
   // for the full structural payload here so the markdown packer has all data
   // to prioritise from.
   const c = await getContext(
     {
-      symbol: args.symbol,
+      symbol,
       depth: args.depth ?? 2,
       strands: ["structural", "tests", "provenance", "invariants"],
       mode: "full",

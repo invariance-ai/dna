@@ -1,0 +1,21 @@
+repo: examples/multi-symbol
+prompt: |
+  Extract the amount-validation logic (the high-value-requires-approval
+  check) from `createRefund` and `createPartialRefund` into a single
+  shared helper `validateRefundAmount(req)`. Both functions must call the
+  new helper; `replayRefund` should also be updated to use it where it
+  applies. The old inline `requireApprovalIfHighValue` should be replaced
+  by (or aliased to) the new helper — do not leave two parallel
+  implementations.
+checks:
+  # The shared helper exists with the requested name.
+  - "grep -Eq '(function|const) validateRefundAmount' src/refunds.ts"
+  # All three call sites reference it.
+  - "grep -A 40 'function createRefund' src/refunds.ts | grep -q 'validateRefundAmount'"
+  - "grep -A 40 'function createPartialRefund' src/refunds.ts | grep -q 'validateRefundAmount'"
+  - "grep -A 40 'function replayRefund' src/refunds.ts | grep -q 'validateRefundAmount'"
+  # Only one validation implementation remains (the old helper either
+  # delegates to the new one or is gone). The "requires approval" string
+  # should appear at most twice (helper body + maybe one preserved test
+  # message), not three times as before.
+  - "test $(grep -c 'requires approval' src/refunds.ts) -le 2"

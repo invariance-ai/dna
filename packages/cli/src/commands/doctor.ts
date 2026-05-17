@@ -87,6 +87,32 @@ async function runChecks(root: string): Promise<Check[]> {
     }
   }
 
+  // Surface cached verify-index report if present.
+  const verifyPath = path.join(root, ".dna/cache/verify-index.json");
+  if (await exists(verifyPath)) {
+    try {
+      const raw = await readFile(verifyPath, "utf8");
+      const v = JSON.parse(raw) as {
+        precision: number;
+        recall: number;
+        coverage: number;
+        thresholds?: { precision: number; recall: number; coverage: number };
+        generated_at?: string;
+      };
+      const t = v.thresholds ?? { precision: 0.95, recall: 0.9, coverage: 0.85 };
+      const ok = v.precision >= t.precision && v.recall >= t.recall && v.coverage >= t.coverage;
+      const pct = (x: number): string => `${(x * 100).toFixed(0)}%`;
+      checks.push({
+        name: "graph quality (verify-index)",
+        ok,
+        detail: `precision ${pct(v.precision)}, recall ${pct(v.recall)}, coverage ${pct(v.coverage)}${v.generated_at ? ` (${v.generated_at})` : ""}`,
+        hint: ok ? undefined : "re-run `dna verify-index` after `dna index`",
+      });
+    } catch {
+      // ignore
+    }
+  }
+
   const claudeMd = path.join(root, "CLAUDE.md");
   const agentsMd = path.join(root, "AGENTS.md");
   const hasClaude = await exists(claudeMd);

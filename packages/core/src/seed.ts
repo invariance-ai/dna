@@ -2,6 +2,7 @@ import { execFile as _execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import fg from "fast-glob";
 import type { SeedProposal, SeedResult } from "@invariance/dna-schemas";
 import { isGitRepo } from "./git.js";
 import { extractTodos } from "./notes.js";
@@ -14,6 +15,23 @@ export interface SeedOptions {
   /** Glob of files to scan for TODOs/FIXMEs. Empty disables. */
   scanFiles?: string[];
 }
+
+/** Tier definitions for `dna init --seed`. Exposed here so they can be
+ * unit-tested without depending on the CLI package. The CLI re-exports
+ * these for its own use. */
+export type SeedTier = "safe" | "medium" | "aggressive";
+export const SEED_TIERS: readonly SeedTier[] = ["safe", "medium", "aggressive"] as const;
+export interface SeedTierConfig {
+  maxCommits: number;
+  maxPrs: number;
+  minConfidence: number;
+  sources: readonly SeedProposal["source"][];
+}
+export const SEED_TIER_DEFAULTS: Record<SeedTier, SeedTierConfig> = {
+  safe:       { maxCommits: 0,   maxPrs: 0,   minConfidence: 0.6, sources: ["todo"] },
+  medium:     { maxCommits: 100, maxPrs: 20,  minConfidence: 0.4, sources: ["todo", "git", "pr"] },
+  aggressive: { maxCommits: 500, maxPrs: 100, minConfidence: 0.2, sources: ["todo", "git", "pr", "incident"] },
+};
 
 /**
  * Mine git history (+ gh PRs when available) for proposed notes/decisions/invariants.
@@ -42,25 +60,42 @@ export async function seed(root: string, opts: SeedOptions = {}): Promise<SeedRe
     }
   }
 
-  // TODO/FIXME mining — re-use extractTodos heuristic.
-  for (const f of opts.scanFiles ?? []) {
-    try {
-      const raw = await readFile(path.resolve(root, f), "utf8");
-      const items = extractTodos(raw, f);
-      for (const t of items) {
-        proposals.push({
-          kind: "note",
-          symbol: t.symbol,
-          applies_to: [t.symbol],
-          text: t.lesson,
-          evidence_link: t.evidence,
-          source: "todo",
-          confidence: 0.6,
-        });
-        todos++;
+  // TODO/FIXME mining — re-use extractTodos heuristic. Expand globs first
+  // so callers can pass patterns (e.g. ALL_SOURCE_GLOBS) rather than
+  // pre-walked file lists.
+  if (opts.scanFiles && opts.scanFiles.length > 0) {
+    const isGlob = (s: string): boolean => /[*?[\]]/.test(s);
+    const patterns = opts.scanFiles.filter(isGlob);
+    const literals = opts.scanFiles.filter((s) => !isGlob(s));
+    let files = literals;
+    if (patterns.length > 0) {
+      const matched = await fg(patterns, {
+        cwd: root,
+        absolute: false,
+        ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/.dna/**"],
+        followSymbolicLinks: false,
+      });
+      files = files.concat(matched);
+    }
+    for (const f of files) {
+      try {
+        const raw = await readFile(path.resolve(root, f), "utf8");
+        const items = extractTodos(raw, f);
+        for (const t of items) {
+          proposals.push({
+            kind: "note",
+            symbol: t.symbol,
+            applies_to: [t.symbol],
+            text: t.lesson,
+            evidence_link: t.evidence,
+            source: "todo",
+            confidence: 0.6,
+          });
+          todos++;
+        }
+      } catch {
+        /* skip */
       }
-    } catch {
-      /* skip */
     }
   }
 
@@ -101,26 +136,33 @@ async function gitLog(root: string, n: number): Promise<CommitInfo[]> {
 
 const FIX_RE = /^(?:fix|bug|hotfix|revert|patch)\b/i;
 const DECISION_RE = /\b(?:chose|chosen|decided|prefer|over|instead of|rejected)\b/i;
+// Conventional Commits prefix: `type(scope): subject` or `type!: subject`.
+// We use the scope (when present) as a feature/area hint on applies_to so
+// reviewers can route the proposal to the right slice of the repo.
+const CONVENTIONAL_RE = /^([a-z]+)(?:\(([^)]+)\))?!?:\s*(.*)$/i;
 
 function commitToProposal(c: CommitInfo): SeedProposal | null {
+  const conv = CONVENTIONAL_RE.exec(c.subject);
+  const scope = conv?.[2]?.trim();
+  const appliesTo = scope ? [scope] : [];
   if (FIX_RE.test(c.subject)) {
     return {
       kind: "note",
-      applies_to: [],
+      applies_to: appliesTo,
       text: c.subject,
       evidence_link: c.sha,
       source: "git",
-      confidence: 0.4,
+      confidence: scope ? 0.5 : 0.4,
     };
   }
   if (DECISION_RE.test(c.subject) || DECISION_RE.test(c.body)) {
     return {
       kind: "decision",
-      applies_to: [],
+      applies_to: appliesTo,
       text: c.subject,
       evidence_link: c.sha,
       source: "git",
-      confidence: 0.5,
+      confidence: scope ? 0.6 : 0.5,
     };
   }
   return null;

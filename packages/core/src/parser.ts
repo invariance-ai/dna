@@ -10,6 +10,13 @@ import type { SymbolRef } from "@invariance/dna-schemas";
  * Trade-off (honest): ~90% precision on typical code, lower on heavy macros,
  * decorators-as-factories, and dynamic dispatch. Good enough for v0.1 because
  * downstream consumers (CLI/MCP) can fall back to grep verification.
+ *
+ * Note on end_line: the regex parser only locates declaration lines — it
+ * does not parse bodies, so `end_line` is left undefined. Downstream
+ * (diff_to_symbols) treats absent end_line as a 1-line symbol, which is the
+ * pre-v0.6a behavior: long functions touched mid-body via the regex parser
+ * may still be missed by the hunk→symbol mapper. Tree-sitter (default) does
+ * track end_line.
  */
 export type ParsedLanguage =
   | "typescript"
@@ -21,11 +28,26 @@ export type ParsedLanguage =
   | "ruby"
   | "csharp";
 
+export interface ImportBinding {
+  /** Local name as visible inside this file. */
+  local: string;
+  /** Module specifier as written in source (e.g. "./refunds", "@app/foo"). */
+  source: string;
+  /** Imported name in the source module; undefined for namespace imports. */
+  imported?: string;
+  /** Kind of binding. "default" means the source module's default export. */
+  kind: "named" | "default" | "namespace";
+}
+
 export interface ParsedFile {
   path: string;
   language: ParsedLanguage;
   symbols: SymbolRef[];
   call_sites: Array<{ callee_name: string; line: number; from: string }>;
+  /** Import bindings observed in this file (TS/JS/Py only for v0.2). */
+  imports?: ImportBinding[];
+  /** Re-exports: names this file re-exports from other modules. */
+  re_exports?: Array<{ local?: string; exported: string; source: string }>;
 }
 
 const TS_PATTERNS: Array<{ kind: SymbolRef["kind"]; re: RegExp }> = [
@@ -109,6 +131,70 @@ const KEYWORDS = new Set([
 ]);
 
 export async function parseFile(filePath: string): Promise<ParsedFile> {
+  if (process.env.DNA_PARSER !== "regex") {
+    const ext = path.extname(filePath);
+    if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx" ||
+        ext === ".mjs" || ext === ".cjs" || ext === ".py") {
+      try {
+        const { parseFileTS } = await import("./parser_ts.js");
+        return await parseFileTS(filePath);
+      } catch (err) {
+        if (process.env.DNA_PARSER === "tree-sitter") throw err;
+        // best-effort fallback to regex; warn once per process, count the rest
+        parserFallbackCount++;
+        if (!warnedFallback) {
+          warnedFallback = true;
+          parserFallbackFirstError = (err as Error).message;
+          console.error(`dna: tree-sitter parser unavailable (${parserFallbackFirstError}); falling back to regex. Set DNA_PARSER=regex to silence.`);
+        }
+      }
+    }
+  }
+  return parseFileRegex(filePath);
+}
+
+let warnedFallback = false;
+let parserFallbackCount = 0;
+let parserFallbackFirstError: string | null = null;
+
+/**
+ * Log a one-line summary if tree-sitter ever fell back to regex during this
+ * process. Callers (e.g. the `index` command) invoke this at end-of-run so
+ * silent fallbacks don't hide a misconfigured install.
+ */
+/**
+ * Hydrate the persistent tree-sitter parse cache for `root`. Cheap when already
+ * loaded. No-op if the regex fallback path is active (DNA_PARSER=regex).
+ */
+export async function loadParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.loadParseCache(root);
+  } catch {
+    // tree-sitter unavailable — caching is moot
+  }
+}
+
+/** Persist the tree-sitter parse cache for `root`. Non-fatal on failure. */
+export async function saveParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.saveParseCache(root);
+  } catch {
+    // tree-sitter unavailable
+  }
+}
+
+export function reportParserFallbacks(): { count: number; firstError: string | null } {
+  if (parserFallbackCount > 1) {
+    console.error(`dna: tree-sitter fell back to regex for ${parserFallbackCount} files this run.`);
+  }
+  return { count: parserFallbackCount, firstError: parserFallbackFirstError };
+}
+
+async function parseFileRegex(filePath: string): Promise<ParsedFile> {
   const src = await readFile(filePath, "utf8");
   const ext = path.extname(filePath);
   const language: ParsedFile["language"] = LANGUAGE_BY_EXT[ext] ?? "typescript";

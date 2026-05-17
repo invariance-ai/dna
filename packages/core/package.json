@@ -10,7 +10,9 @@
     "access": "public"
   },
   "files": [
-    "dist",
+    "dist/**",
+    "src/**",
+    "grammars/**/*.wasm",
     "README.md"
   ],
   "scripts": {
@@ -20,7 +22,10 @@
   },
   "dependencies": {
     "@invariance/dna-schemas": "workspace:*",
+    "chokidar": "^4.0.0",
     "fast-glob": "^3.3.2",
+    "typescript": "^5.6.0",
+    "web-tree-sitter": "^0.26.8",
     "yaml": "^2.5.0"
   }
 }

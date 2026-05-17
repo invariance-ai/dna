@@ -22,9 +22,33 @@ export const SymbolRef = z.object({
   container: z.string().optional(),
   file: z.string(),
   line: z.number().int().nonnegative(),
+  /**
+   * Last source line covered by the symbol body (1-indexed, inclusive).
+   * Optional for back-compat with v0.1/v0.2 indexes; absent ⇒ caller should
+   * treat as a 1-line symbol (degrades to start-line-only behavior).
+   */
+  end_line: z.number().int().nonnegative().optional(),
   kind: SymbolKind,
 });
 export type SymbolRef = z.infer<typeof SymbolRef>;
+
+/**
+ * Edge confidence, ordered most-to-least trustworthy:
+ *   exact      — resolved via import binding + symbol table; same file or
+ *                resolved module path; we know the exact target symbol.
+ *   typed      — confirmed by an external type oracle (tsserver / pyright).
+ *   heuristic  — name-matched against the symbol index (current regex behavior).
+ *   unresolved — callee identified but no candidate target found.
+ *   name-only  — legacy label for v0.1 regex graph; same semantics as heuristic.
+ */
+export const ResolutionStatus = z.enum([
+  "exact",
+  "typed",
+  "heuristic",
+  "unresolved",
+  "name-only",
+]);
+export type ResolutionStatus = z.infer<typeof ResolutionStatus>;
 
 export const Edge = z.object({
   type: z.enum([
@@ -40,6 +64,7 @@ export const Edge = z.object({
     "implements",
   ]),
   target: SymbolRef,
+  resolution_status: ResolutionStatus.optional(),
 });
 export type Edge = z.infer<typeof Edge>;
 
@@ -130,6 +155,12 @@ export const Note = z.object({
   verified_at: z.string().optional(),
   /** Author identity recorded at write time (git user.email when available). */
   author: z.string().optional(),
+  /** Stable symbol id this note is anchored to. Survives renames/moves. */
+  anchor_id: z.string().optional(),
+  /** Commit SHA at note-creation time (lets us detect if anchor body changed). */
+  source_commit: z.string().optional(),
+  /** ISO date after which this note auto-archives. */
+  expires_at: z.string().optional(),
 });
 export type Note = z.infer<typeof Note>;
 
@@ -162,6 +193,9 @@ export const Decision = z.object({
   confidence: z.number().min(0).max(1).optional(),
   verified_by: z.string().optional(),
   verified_at: z.string().optional(),
+  anchor_id: z.string().optional(),
+  source_commit: z.string().optional(),
+  expires_at: z.string().optional(),
 });
 export type Decision = z.infer<typeof Decision>;
 
@@ -535,7 +569,9 @@ export type FindReusableResult = z.infer<typeof FindReusableResult>;
  * invariants + risk) optimised for the LLM, not for chaining.
  */
 export const PrepareEditInput = z.object({
-  symbol: z.string(),
+  symbol: z.string().optional().describe(
+    "Symbol to prepare. Optional if `intent` is provided — DNA will infer the top-matching symbol from the intent text.",
+  ),
   intent: z.string().describe("What the agent plans to change, in one sentence."),
   budget: z.number().int().positive().optional().describe(
     "Optional token budget; sections are dropped tail-first when exceeded.",
@@ -563,6 +599,10 @@ export const PrepareEditResult = z.object({
   preferences: z.array(Preference).default([]),
   tests_to_run: z.array(z.string()),
   risk: z.enum(["low", "medium", "high"]),
+  /** When `symbol` was inferred from intent, the ranked alternates. */
+  candidates: z
+    .array(z.object({ symbol: z.string(), score: z.number(), via: z.string() }))
+    .optional(),
 });
 export type PrepareEditResult = z.infer<typeof PrepareEditResult>;
 
@@ -902,6 +942,164 @@ export const PromotionCandidatesResult = z.object({
 });
 export type PromotionCandidatesResult = z.infer<typeof PromotionCandidatesResult>;
 
+/* ---------- validate_knowledge (P3) ---------- */
+
+export const ValidateKnowledgeInput = z.object({});
+export type ValidateKnowledgeInput = z.infer<typeof ValidateKnowledgeInput>;
+
+export const KnowledgeIssue = z.object({
+  kind: z.enum(["missing_anchor", "expired", "no_anchor_id"]),
+  source: z.enum(["note", "decision", "invariant"]),
+  entry: z.object({
+    symbol: z.string().optional(),
+    anchor_id: z.string().optional(),
+    summary: z.string(),
+  }),
+  suggested_anchor: z.object({
+    symbol_id: z.string(),
+    qualified_name: z.string(),
+    file: z.string(),
+    score: z.number(),
+  }).optional(),
+});
+
+export const ValidateKnowledgeResult = z.object({
+  total: z.object({
+    notes: z.number().int().nonnegative(),
+    decisions: z.number().int().nonnegative(),
+    invariants: z.number().int().nonnegative(),
+  }),
+  issues: z.array(KnowledgeIssue),
+});
+export type ValidateKnowledgeResult = z.infer<typeof ValidateKnowledgeResult>;
+
+/* ---------- seed_propose (P1.5) ---------- */
+
+export const SeedProposeInput = z.object({
+  tier: z.enum(["safe", "medium", "aggressive"]).default("safe"),
+  limit: z.number().int().positive().optional(),
+});
+export type SeedProposeInput = z.infer<typeof SeedProposeInput>;
+
+export const SeedProposeResult = z.object({
+  tier: z.string(),
+  proposals: z.array(z.any()),
+  scanned: z.object({
+    commits: z.number().int().nonnegative(),
+    prs: z.number().int().nonnegative(),
+    todos: z.number().int().nonnegative(),
+  }),
+});
+export type SeedProposeResult = z.infer<typeof SeedProposeResult>;
+
+/* ---------- gate_stream / review_diff (P2) ---------- */
+
+export const GateStreamInput = z.object({
+  /** Preferred cursor: return entries with seq > since_seq. */
+  since_seq: z.number().int().nonnegative().optional(),
+  /** Backwards-compat cursor: ISO timestamp. Ignored if since_seq is set. */
+  since: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+});
+export type GateStreamInput = z.infer<typeof GateStreamInput>;
+
+export const GateStreamEntry = z.object({
+  /** Monotonic per-file counter; use as cursor for the next call. */
+  seq: z.number().int().nonnegative(),
+  ts: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  hits: z.array(z.any()),
+  blocking: z.array(z.any()),
+});
+export const GateStreamResult = z.object({
+  entries: z.array(GateStreamEntry),
+});
+export type GateStreamResult = z.infer<typeof GateStreamResult>;
+
+export const ReviewDiffInput = z.object({
+  base: z.string().optional(),
+});
+export type ReviewDiffInput = z.infer<typeof ReviewDiffInput>;
+
+export const ReviewDiffResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(z.string()),
+  hits: z.array(z.any()),
+  blocking: z.array(z.any()),
+});
+export type ReviewDiffResult = z.infer<typeof ReviewDiffResult>;
+
+/* ---------- verify_index (P0c) ---------- */
+
+export const VerifyIndexInput = z.object({
+  sample: z.number().int().positive().optional(),
+});
+export type VerifyIndexInput = z.infer<typeof VerifyIndexInput>;
+
+export const VerifyIndexWorst = z.object({
+  from_file: z.string(),
+  from_line: z.number().int().nonnegative(),
+  callee: z.string(),
+  dna_resolved_to: z.string().optional(),
+  ts_resolved_to: z.string().optional(),
+  issue: z.enum(["wrong_target", "ts_says_no_target", "dna_missed"]),
+});
+
+export const VerifyIndexResult = z.object({
+  language: z.enum(["typescript"]),
+  sample_size: z.number().int().nonnegative(),
+  total_edges: z.number().int().nonnegative(),
+  precision: z.number().min(0).max(1),
+  recall: z.number().min(0).max(1),
+  coverage: z.number().min(0).max(1),
+  worst: z.array(VerifyIndexWorst),
+});
+export type VerifyIndexResult = z.infer<typeof VerifyIndexResult>;
+
+/* ---------- Brief (pre-finalize briefing) ---------- */
+
+export const BriefInput = z.object({
+  base: z.string().optional(),
+  max_symbols: z.number().int().min(1).max(200).optional(),
+});
+export type BriefInput = z.infer<typeof BriefInput>;
+
+export const BriefGateHit = z.object({
+  invariant: Invariant,
+  symbols: z.array(z.string()),
+  files: z.array(z.string()),
+  waived: z.boolean(),
+});
+
+export const BriefNoteEntry = z.object({
+  scope: z.enum(["symbol", "file", "area"]),
+  target: z.string(),
+  notes: z.array(Note),
+});
+
+export const BriefSymbolEntry = z.object({
+  symbol: SymbolRef,
+  tests: z.array(TestRef),
+  questions: z.array(Question),
+});
+
+export const BriefResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(SymbolRef),
+  invariants: z.object({
+    hits: z.array(BriefGateHit),
+    blocking_count: z.number().int().nonnegative(),
+  }),
+  notes: z.array(BriefNoteEntry),
+  per_symbol: z.array(BriefSymbolEntry),
+  untested_symbols: z.array(z.string()),
+  truncated: z.boolean(),
+});
+export type BriefResult = z.infer<typeof BriefResult>;
+
 /**
  * Tool catalogue — referenced by CLI command registration and MCP server
  * registration so the surfaces cannot drift.
@@ -1113,6 +1311,42 @@ export const TOOLS = {
       "Rule-based clustering of un-promoted notes on a symbol; clusters with ≥ min_occurrences and overlap ≥ threshold are candidates for promotion to invariants. Use as the authoring queue for the team's rules layer.",
     input: PromotionCandidatesInput,
     output: PromotionCandidatesResult,
+  },
+  verify_index: {
+    description:
+      "Score DNA's symbol graph against TypeScript's type checker. Returns precision (DNA edges ts confirms), recall (ts edges DNA found), coverage (% of edges with exact|typed status), and a list of worst-offending callsites. Use this to prove DNA's affected-symbols claims are trustworthy on a given repo, or to find graph-quality regressions after a parser change.",
+    input: VerifyIndexInput,
+    output: VerifyIndexResult,
+  },
+  gate_stream: {
+    description:
+      "Tail the live gate stream — invariant violations detected while files were being edited (via `dna gate --watch` or a PostToolUse hook). Use between tool calls to catch a violation you just introduced. Preferred cursor: `since_seq` (monotonic counter from the last entry you saw; returns entries with seq > since_seq). `since` (ISO timestamp) is accepted for backwards compatibility and ignored when `since_seq` is supplied. Use `limit` to cap the last N.",
+    input: GateStreamInput,
+    output: GateStreamResult,
+  },
+  review_diff: {
+    description:
+      "Final-call invariant check against the current dirty diff. Maps changed hunks to changed symbols and runs the gate. Call before declaring an edit done.",
+    input: ReviewDiffInput,
+    output: ReviewDiffResult,
+  },
+  seed_propose: {
+    description:
+      "Mine repo history (TODOs, commits, PRs) for candidate notes and invariants. Tiered by confidence: safe (TODOs/FIXMEs only), medium (+ recent commits/PRs), aggressive (+ blame, weaker signals). Returns proposals — does not auto-write. Pair with `dna init --seed <tier>` for the CLI flow that drops candidates into .dna/candidates/.",
+    input: SeedProposeInput,
+    output: SeedProposeResult,
+  },
+  validate_knowledge: {
+    description:
+      "Audit notes, decisions, and invariants for anchor drift: symbols that vanished, anchors using legacy line-based IDs, and entries past expires_at. Returns suggested re-anchors when a fuzzy match exists. Run periodically after refactors to keep memory from rotting.",
+    input: ValidateKnowledgeInput,
+    output: ValidateKnowledgeResult,
+  },
+  brief: {
+    description:
+      "Pre-finalize briefing for the dirty diff. Returns changed symbols, invariants that apply to them, notes attached to changed symbols/files/areas, tests likely to run, and a list of changed symbols with no test coverage. Call this as the last step before declaring an edit done — pairs with prepare_edit on the front end.",
+    input: BriefInput,
+    output: BriefResult,
   },
 } as const;
 

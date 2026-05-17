@@ -25,6 +25,81 @@ export interface GateOptions {
   files?: string[];
 }
 
+/**
+ * Incremental gate: caller supplies the touched files + symbols directly,
+ * instead of asking us to re-read git. Built for the live-watch loop and
+ * for PostToolUse hooks where we already know what just changed.
+ */
+export interface GateIncrementalInput {
+  touched_files: string[];
+  touched_symbols?: string[];
+}
+
+export async function gateIncremental(
+  root: string,
+  input: GateIncrementalInput,
+): Promise<GateResult> {
+  let symbols: SymbolRef[] = [];
+  try {
+    const idx = await readIndex(root);
+    symbols = idx.symbols;
+  } catch {
+    // no index
+  }
+
+  const fileSet = new Set(input.touched_files);
+  const explicitSymSet = input.touched_symbols ? new Set(input.touched_symbols) : undefined;
+  const changed = symbols.filter((s) => {
+    if (explicitSymSet) return explicitSymSet.has(s.qualified_name ?? s.name);
+    return fileSet.has(s.file);
+  });
+  const changedSymbolIds = [...new Set(changed.map((s) => s.qualified_name ?? s.name))];
+
+  const all = await loadInvariants(root);
+  const waivers = await loadWaivers(root);
+  const byInv = new Map<string, GateHit>();
+
+  for (const sym of changed) {
+    const symId = sym.qualified_name ?? sym.name;
+    const applied = invariantsFor(symId, all);
+    for (const inv of applied) {
+      const key = inv.name;
+      const waiver = waivers.find((w) => w.invariant === inv.name);
+      const cur = byInv.get(key) ?? {
+        invariant: inv,
+        symbols: [],
+        files: [],
+        waived: isWaived(inv.name, waivers),
+        waiver,
+      };
+      if (!cur.symbols.includes(symId)) cur.symbols.push(symId);
+      if (!cur.files.includes(sym.file)) cur.files.push(sym.file);
+      byInv.set(key, cur);
+    }
+  }
+  for (const inv of all) {
+    if (byInv.has(inv.name)) continue;
+    const filesHit = input.touched_files.filter((f) =>
+      inv.applies_to.some((p) => fileMatches(f, p)),
+    );
+    if (filesHit.length === 0) continue;
+    const waiver = waivers.find((w) => w.invariant === inv.name);
+    byInv.set(inv.name, {
+      invariant: inv,
+      symbols: [],
+      files: filesHit,
+      waived: isWaived(inv.name, waivers),
+      waiver,
+    });
+  }
+
+  const hits = [...byInv.values()].sort(
+    (a, b) => severityRank(b.invariant.severity) - severityRank(a.invariant.severity),
+  );
+  const blocking = hits.filter((h) => h.invariant.severity === "block" && !h.waived);
+  return { base: "incremental", changed_files: input.touched_files, changed_symbols: changedSymbolIds, hits, blocking };
+}
+
 export async function gate(root: string, opts: GateOptions = {}): Promise<GateResult> {
   const diff = opts.files
     ? { base: opts.base ?? "HEAD", files: opts.files }
