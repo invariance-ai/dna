@@ -155,6 +155,31 @@ let parserFallbackFirstError: string | null = null;
  * process. Callers (e.g. the `index` command) invoke this at end-of-run so
  * silent fallbacks don't hide a misconfigured install.
  */
+/**
+ * Hydrate the persistent tree-sitter parse cache for `root`. Cheap when already
+ * loaded. No-op if the regex fallback path is active (DNA_PARSER=regex).
+ */
+export async function loadParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.loadParseCache(root);
+  } catch {
+    // tree-sitter unavailable — caching is moot
+  }
+}
+
+/** Persist the tree-sitter parse cache for `root`. Non-fatal on failure. */
+export async function saveParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.saveParseCache(root);
+  } catch {
+    // tree-sitter unavailable
+  }
+}
+
 export function reportParserFallbacks(): { count: number; firstError: string | null } {
   if (parserFallbackCount > 1) {
     console.error(`dna: tree-sitter fell back to regex for ${parserFallbackCount} files this run.`);
