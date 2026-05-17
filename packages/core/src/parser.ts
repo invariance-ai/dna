@@ -10,6 +10,13 @@ import type { SymbolRef } from "@invariance/dna-schemas";
  * Trade-off (honest): ~90% precision on typical code, lower on heavy macros,
  * decorators-as-factories, and dynamic dispatch. Good enough for v0.1 because
  * downstream consumers (CLI/MCP) can fall back to grep verification.
+ *
+ * Note on end_line: the regex parser only locates declaration lines — it
+ * does not parse bodies, so `end_line` is left undefined. Downstream
+ * (diff_to_symbols) treats absent end_line as a 1-line symbol, which is the
+ * pre-v0.6a behavior: long functions touched mid-body via the regex parser
+ * may still be missed by the hunk→symbol mapper. Tree-sitter (default) does
+ * track end_line.
  */
 export type ParsedLanguage =
   | "typescript"
@@ -155,6 +162,31 @@ let parserFallbackFirstError: string | null = null;
  * process. Callers (e.g. the `index` command) invoke this at end-of-run so
  * silent fallbacks don't hide a misconfigured install.
  */
+/**
+ * Hydrate the persistent tree-sitter parse cache for `root`. Cheap when already
+ * loaded. No-op if the regex fallback path is active (DNA_PARSER=regex).
+ */
+export async function loadParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.loadParseCache(root);
+  } catch {
+    // tree-sitter unavailable — caching is moot
+  }
+}
+
+/** Persist the tree-sitter parse cache for `root`. Non-fatal on failure. */
+export async function saveParseCache(root: string): Promise<void> {
+  if (process.env.DNA_PARSER === "regex") return;
+  try {
+    const m = await import("./parser_ts.js");
+    await m.saveParseCache(root);
+  } catch {
+    // tree-sitter unavailable
+  }
+}
+
 export function reportParserFallbacks(): { count: number; firstError: string | null } {
   if (parserFallbackCount > 1) {
     console.error(`dna: tree-sitter fell back to regex for ${parserFallbackCount} files this run.`);

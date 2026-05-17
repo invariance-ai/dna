@@ -139,6 +139,33 @@ export async function resetWorkingTree(repoPath: string): Promise<void> {
   await execFile("git", ["-C", repoPath, "checkout", "--", "."]);
   await execFile("git", ["-C", repoPath, "clean", "-fd"]);
   await rm(path.join(repoPath, ".dna"), { recursive: true, force: true });
+  // Also scrub .mcp.json so the dna arm's MCP config cannot leak into the
+  // baseline arm's next attempt (the only between-arm difference must be
+  // the MCP-discovery file, written fresh each dna-arm attempt below).
+  await rm(path.join(repoPath, ".mcp.json"), { recursive: true, force: true });
+}
+
+/**
+ * Canonical `.mcp.json` for Claude Code (and any other MCP-discovery agent)
+ * to load DNA's MCP server. We use the globally-installed `dna` binary in
+ * the bench because the harness already requires `claude -p` on PATH; if
+ * `dna` isn't on PATH the agent simply gets no MCP tools and the dna arm
+ * degenerates to baseline (which is the honest fallback, not silent help).
+ *
+ * Matches the shape written by `dna install claude --use-global` in
+ * packages/cli/src/commands/install.ts (`upsertClaudeMcp`).
+ */
+export const DNA_MCP_CONFIG = {
+  mcpServers: {
+    dna: { command: "dna", args: ["serve"] },
+  },
+} as const;
+
+async function writeDnaMcpConfig(repoPath: string): Promise<void> {
+  await writeFile(
+    path.join(repoPath, ".mcp.json"),
+    JSON.stringify(DNA_MCP_CONFIG, null, 2) + "\n",
+  );
 }
 
 /**
@@ -178,9 +205,17 @@ export async function runTask(
 
   const { workPath, dispose } = await prepareRepoForAttempt(repoPath);
 
-  const prompt = arm === "dna"
-    ? `${task.prompt}\n\nUse the dna MCP server (get_context, impact_of, tests_for, invariants_for) before editing.`
-    : task.prompt;
+  // PROMPT FAIRNESS (closes hole flagged in bench/dogfood/2026-05-16-v02-validation.md):
+  // both arms get the IDENTICAL prompt. The only difference between arms is
+  // whether `.mcp.json` is present in workPath — that is what an agent like
+  // `claude -p` reads at session start to discover DNA's MCP tools (same
+  // mechanism `dna install claude` wires up for real users). Telling the
+  // baseline a tool exists via prompt-text was conflating "DNA's tools
+  // helped" with "prompting the agent that tools exist helped".
+  const prompt = task.prompt;
+  if (arm === "dna") {
+    await writeDnaMcpConfig(workPath);
+  }
 
   const t0 = Date.now();
   let output = "";

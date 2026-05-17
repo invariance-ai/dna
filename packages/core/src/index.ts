@@ -48,6 +48,7 @@ export * from "./lesson_pending.js";
 export * from "./resolver.js";
 export * from "./symbol_id.js";
 export * from "./verify_index.js";
+export * from "./verify_index_python.js";
 export * from "./diff_to_symbols.js";
 export * from "./gate_stream.js";
 export * from "./validate_knowledge.js";

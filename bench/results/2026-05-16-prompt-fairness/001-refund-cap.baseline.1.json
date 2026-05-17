@@ -1,0 +1,10 @@
+{
+  "task_id": "001-refund-cap",
+  "arm": "baseline",
+  "attempt": 1,
+  "passed": true,
+  "failed_checks": [],
+  "duration_sec": 21.025,
+  "output_chars": 261,
+  "timed_out": false
+}
