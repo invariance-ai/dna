@@ -50,7 +50,11 @@ export function registerGate(program: Command): void {
           }
         },
       });
-      const shutdown = (): void => { handle.stop(); process.exit(0); };
+      const shutdown = (): void => {
+        // Await stop() so in-flight evaluate() and the JSONL writer flush
+        // cleanly before we exit.
+        handle.stop().finally(() => process.exit(0));
+      };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
       return;
