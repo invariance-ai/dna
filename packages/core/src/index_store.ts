@@ -173,6 +173,16 @@ export async function buildIndex(root: string, parsed: ParsedFile[]): Promise<Dn
         to = targetMap?.get(resolved.target.name);
         if (to) status = "exact";
       }
+      // Qualified callee (e.g. "Foo.bar" from this.bar()/self.bar() handlers)
+      // resolves precisely via byQualifiedName — the class+method pair is
+      // unambiguous in the same file. Mark "exact", not "heuristic".
+      if (!to && cs.callee_name.includes(".")) {
+        const q = byQualifiedName.get(cs.callee_name);
+        if (q) {
+          to = q;
+          status = "exact";
+        }
+      }
       // Fall back to heuristic name match.
       if (!to) {
         to = resolveLocalSymbol(relFile, cs.callee_name, byFileAndName, byQualifiedName, byName);

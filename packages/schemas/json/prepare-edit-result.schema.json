@@ -165,6 +165,15 @@
               },
               "author": {
                 "type": "string"
+              },
+              "anchor_id": {
+                "type": "string"
+              },
+              "source_commit": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
               }
             },
             "required": [
@@ -229,6 +238,15 @@
                 "type": "string"
               },
               "verified_at": {
+                "type": "string"
+              },
+              "anchor_id": {
+                "type": "string"
+              },
+              "source_commit": {
+                "type": "string"
+              },
+              "expires_at": {
                 "type": "string"
               }
             },
@@ -307,6 +325,29 @@
             "medium",
             "high"
           ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "via": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "symbol",
+              "score",
+              "via"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [

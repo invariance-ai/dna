@@ -12,16 +12,28 @@
 
 const SHARED_AGENT_BLOCK = `\`dna\` is local repo memory: symbol graph, tests, invariants, lessons, decisions, and personal preferences. Hooks auto-fire dna on session start, on prompts, before/after edits, and on failures — you usually don't need to call dna by hand.
 
+## The 30-second loop
+
+For any non-trivial edit, do these three:
+
+1. **\`dna find <keyword>\`** — before writing new code, check if a helper already exists.
+2. **\`dna prepare --intent "<what you plan to do>"\`** (or MCP \`prepare_edit\`) — get a decision-ready brief: invariants, callers, tests, prior decisions, notes. \`--intent\` infers the symbol from natural language; you don't need to know the exact name.
+3. **\`dna brief\`** (or MCP \`brief\`) — before declaring done. Reports changed symbols, invariants that touch them, notes attached to them, tests likely to run, and warns about changed symbols with no test coverage. Exit code 1 only on blocking invariants.
+
+That loop catches the most expensive failure modes (re-implementing something, breaking an invariant, leaving an untested change) before they leave your machine.
+
 **Before editing a non-trivial symbol, call the MCP tool \`prepare_edit\` first** (it's exposed as \`mcp__dna__prepare_edit\` in Claude Code, or just \`prepare_edit\` in Cursor/Codex). The brief it returns — invariants, callers, tests, prior decisions — is what dna exists for; relying on Glob/Read/Grep alone is what dogfood measured as the +28% output / no quality-win path. Treat \`prepare_edit\` like a code-search call you make *before* exploration, not after.
 
 Useful manual calls:
 
 \`\`\`bash
-dna find "<keyword>"               # locate existing helpers before writing new ones
-dna context <symbol> --markdown    # plan a multi-file change
-dna decisions <symbol>             # check prior choices before re-litigating
-dna preferences                    # see the user's captured standing rules
-dna prepare <symbol> --intent "…"  # decision-ready brief if the auto-context wasn't enough
+dna find "<keyword>"                  # locate existing helpers before writing new ones
+dna context <symbol> --markdown       # plan a multi-file change
+dna decisions <symbol>                # check prior choices before re-litigating
+dna preferences                       # see the user's captured standing rules
+dna prepare --intent "<plan>"         # decision-ready brief; symbol inferred from intent
+dna prepare <symbol> --intent "<…>"   # same, with explicit symbol
+dna brief                             # pre-finalize: changed symbols, invariants, notes, tests, no-test warnings
 \`\`\`
 
 When the user gives a durable instruction ("from now on…", "always…", "i prefer…", "don't ever…"), the capture-preference hook records it automatically. Treat \`dna preferences\` output as soft constraints in every session.
@@ -80,6 +92,18 @@ Respect invariants marked \`block\`. Run tests listed by the prepare output or b
 dna tests <symbol> --json
 \`\`\`
 
+Before declaring an edit done, run the brief — it catches blocking invariants and untested changes:
+
+\`\`\`text
+mcp__dna__brief {}
+\`\`\`
+
+CLI equivalent:
+
+\`\`\`bash
+dna brief
+\`\`\`
+
 Before creating a new helper, search for reusable code:
 
 \`\`\`bash
@@ -123,9 +147,10 @@ ${SHARED_AGENT_BLOCK}
 Cursor's agent runtime has shell access. Treat \`dna\` like \`rg\`: a local command you run before edits, not a service to call.
 
 \`\`\`bash
-dna prepare <symbol> --intent "<short intent>"   # decision-ready brief
-dna tests <symbol> --json                        # tests that protect this symbol
 dna find "<keyword>" --json                      # reusable helpers before writing new ones
+dna prepare --intent "<plan>"                    # decision-ready brief, symbol inferred
+dna brief                                        # pre-finalize check: invariants + notes + tests
+dna tests <symbol> --json                        # tests that protect a specific symbol
 \`\`\`
 
 After a successful edit:

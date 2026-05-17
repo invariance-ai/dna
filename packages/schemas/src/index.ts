@@ -1058,6 +1058,48 @@ export const VerifyIndexResult = z.object({
 });
 export type VerifyIndexResult = z.infer<typeof VerifyIndexResult>;
 
+/* ---------- Brief (pre-finalize briefing) ---------- */
+
+export const BriefInput = z.object({
+  base: z.string().optional(),
+  max_symbols: z.number().int().min(1).max(200).optional(),
+});
+export type BriefInput = z.infer<typeof BriefInput>;
+
+export const BriefGateHit = z.object({
+  invariant: Invariant,
+  symbols: z.array(z.string()),
+  files: z.array(z.string()),
+  waived: z.boolean(),
+});
+
+export const BriefNoteEntry = z.object({
+  scope: z.enum(["symbol", "file", "area"]),
+  target: z.string(),
+  notes: z.array(Note),
+});
+
+export const BriefSymbolEntry = z.object({
+  symbol: SymbolRef,
+  tests: z.array(TestRef),
+  questions: z.array(Question),
+});
+
+export const BriefResult = z.object({
+  base: z.string(),
+  changed_files: z.array(z.string()),
+  changed_symbols: z.array(SymbolRef),
+  invariants: z.object({
+    hits: z.array(BriefGateHit),
+    blocking_count: z.number().int().nonnegative(),
+  }),
+  notes: z.array(BriefNoteEntry),
+  per_symbol: z.array(BriefSymbolEntry),
+  untested_symbols: z.array(z.string()),
+  truncated: z.boolean(),
+});
+export type BriefResult = z.infer<typeof BriefResult>;
+
 /**
  * Tool catalogue — referenced by CLI command registration and MCP server
  * registration so the surfaces cannot drift.
@@ -1299,6 +1341,12 @@ export const TOOLS = {
       "Audit notes, decisions, and invariants for anchor drift: symbols that vanished, anchors using legacy line-based IDs, and entries past expires_at. Returns suggested re-anchors when a fuzzy match exists. Run periodically after refactors to keep memory from rotting.",
     input: ValidateKnowledgeInput,
     output: ValidateKnowledgeResult,
+  },
+  brief: {
+    description:
+      "Pre-finalize briefing for the dirty diff. Returns changed symbols, invariants that apply to them, notes attached to changed symbols/files/areas, tests likely to run, and a list of changed symbols with no test coverage. Call this as the last step before declaring an edit done — pairs with prepare_edit on the front end.",
+    input: BriefInput,
+    output: BriefResult,
   },
 } as const;
 

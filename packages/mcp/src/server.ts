@@ -59,6 +59,7 @@ import {
   seed,
   ALL_SOURCE_GLOBS,
   validateKnowledge,
+  brief,
 } from "@invariance/dna-core";
 import { llmClassify } from "@invariance/dna-llm";
 
@@ -457,6 +458,10 @@ async function dispatch(name: ToolName, args: unknown): Promise<unknown> {
     }
     case "validate_knowledge": {
       return validateKnowledge(root);
+    }
+    case "brief": {
+      const a = args as { base?: string; max_symbols?: number };
+      return brief(root, { base: a.base, max_symbols: a.max_symbols });
     }
     case "seed_propose": {
       const a = args as { tier?: "safe" | "medium" | "aggressive"; limit?: number };

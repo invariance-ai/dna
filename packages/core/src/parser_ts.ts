@@ -475,11 +475,7 @@ function walkJsTs(
   } else if (t === "call_expression") {
     const fn = node.childForFieldName("function");
     if (fn) {
-      // Only track bare-identifier calls (`foo()`). Member calls (`x.foo()`)
-      // can't be resolved from name alone without type info and produce
-      // massive false-positive rates (every `.push()` matching a local
-      // `function push()`). Method calls are picked up when the receiver's
-      // class is in scope via the dedicated method walker.
+      // Bare-identifier calls (`foo()`) — resolved by name.
       if (fn.type === "identifier") {
         const callee = fn.text;
         if (callee && callee !== enclosing) {
@@ -488,6 +484,25 @@ function walkJsTs(
             line: node.startPosition.row + 1,
             from: enclosing,
           });
+        }
+      } else if (fn.type === "member_expression") {
+        // `this.foo()` — resolve to the enclosing class's method when in scope.
+        // Other member calls (`x.foo()`) skipped: would require type info.
+        const obj = fn.childForFieldName("object");
+        const prop = fn.childForFieldName("property");
+        const isThis = obj && (obj.type === "this" || obj.type === "this_expression");
+        if (isThis && prop && prop.type === "property_identifier") {
+          const container = classStack[classStack.length - 1];
+          if (container) {
+            const callee = `${container}.${prop.text}`;
+            if (callee !== enclosing) {
+              call_sites.push({
+                callee_name: callee,
+                line: node.startPosition.row + 1,
+                from: enclosing,
+              });
+            }
+          }
         }
       }
     }
@@ -546,17 +561,39 @@ function walkPython(
     }
   } else if (t === "call") {
     const fn = node.childForFieldName("function");
-    if (fn && fn.type === "identifier") {
-      const callee = fn.text;
-      if (callee && callee !== enclosing) {
-        call_sites.push({
-          callee_name: callee,
-          line: node.startPosition.row + 1,
-          from: enclosing,
-        });
+    if (fn) {
+      if (fn.type === "identifier") {
+        const callee = fn.text;
+        if (callee && callee !== enclosing) {
+          call_sites.push({
+            callee_name: callee,
+            line: node.startPosition.row + 1,
+            from: enclosing,
+          });
+        }
+      } else if (fn.type === "attribute") {
+        // `self.bar()` — resolve to enclosing class's method. Other attribute
+        // calls (`obj.foo()`) skipped: would require type info.
+        const obj = fn.childForFieldName("object");
+        const attr = fn.childForFieldName("attribute");
+        if (
+          obj && obj.type === "identifier" && obj.text === "self" &&
+          attr && attr.type === "identifier"
+        ) {
+          const container = classStack[classStack.length - 1];
+          if (container) {
+            const callee = `${container}.${attr.text}`;
+            if (callee !== enclosing) {
+              call_sites.push({
+                callee_name: callee,
+                line: node.startPosition.row + 1,
+                from: enclosing,
+              });
+            }
+          }
+        }
       }
     }
-    // attribute calls (`self.bar()`, `obj.foo()`) skipped — see TS walker.
   }
 
   for (const c of node.children) {
