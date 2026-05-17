@@ -1,0 +1,12 @@
+repo: examples/multi-symbol
+prompt: |
+  Rename `createRefund` to `issueRefund`. All call sites in the codebase
+  must be updated — leave no references to the old name (including in
+  comments). Do not introduce a backward-compat alias.
+checks:
+  # New name lives where the old definition was.
+  - "grep -q 'export function issueRefund' src/refunds.ts"
+  # Old name is gone everywhere (including comments / docstrings).
+  - "! grep -rIn 'createRefund' src/ 2>/dev/null"
+  # No alias / re-export shortcut.
+  - "! grep -rIn 'createRefund.*=.*issueRefund\\|issueRefund.*=.*createRefund\\|export.*createRefund' src/ 2>/dev/null"

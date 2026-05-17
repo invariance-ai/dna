@@ -5,4 +5,3 @@ prompt: |
 checks:
   - "! grep -r 'createRefund' src/ 2>/dev/null"
   - "grep -q 'issueRefund' src/refunds.ts"
-invariants_expected: []

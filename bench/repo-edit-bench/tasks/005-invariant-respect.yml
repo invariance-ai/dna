@@ -1,0 +1,19 @@
+repo: examples/multi-symbol
+prompt: |
+  Add a maximum-amount cap of $50,000 (USD) for any refund. Reject
+  amounts above the cap. The cap must apply to all three refund entry
+  points — `createRefund`, `createPartialRefund`, and `replayRefund`.
+
+  Important: do not weaken the existing high-value-requires-approval
+  rule. Refunds at or above $1000 without `approvedBy` must still throw.
+checks:
+  # The cap is encoded somewhere.
+  - "grep -Eq '50000|50_000|50,000' src/refunds.ts"
+  # The cap is enforced in all three entry points (each must reference
+  # the cap value or call a shared validator that does).
+  - "grep -B 20 -A 0 'function createRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount' || grep -A 40 'function createRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount'"
+  - "grep -A 40 'function createPartialRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount'"
+  - "grep -A 40 'function replayRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount'"
+  # The approval invariant survives — HIGH_VALUE_USD comparison must still exist.
+  - "grep -Eq 'HIGH_VALUE_USD|>= ?1000|>=1000' src/refunds.ts"
+  - "grep -q 'requires approval' src/refunds.ts"

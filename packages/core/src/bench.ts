@@ -4,13 +4,16 @@ import { readFile, readdir, mkdir, writeFile, rm, mkdtemp, cp, stat } from "node
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { wilson, formatWilsonPct, type WilsonCI } from "./stats.js";
 
 const execFile = promisify(_execFile);
 
 /**
- * Repo-edit-bench harness. Runs a coding agent (default: `claude -p`)
- * across two arms (without DNA, with DNA) for N attempts per (task, arm),
- * runs the task's checks, and scores both.
+ * Repo-edit-bench harness. Runs one or more coding agents (default: a
+ * single `claude -p`) across two arms (without DNA, with DNA) for N
+ * attempts per (agent, task, arm), runs the task's checks, and scores
+ * each. Matrix mode (multiple agents) is how we surface lift on weaker
+ * models when opus baseline already solves every toy task.
  *
  * Critical invariant: every attempt runs in a clean working tree. We reset
  * (or copy to a fresh tmpdir) before each attempt so arm-1's edits and
@@ -21,17 +24,22 @@ export interface BenchTask {
   repo: string;
   prompt: string;
   checks: string[];
-  /**
-   * @deprecated Not yet wired into checks. Kept for forward-compat;
-   * if you need invariant checking today, encode it as a shell `check`.
-   */
-  invariants_expected?: string[];
+}
+
+/** A single agent the bench will run. Label is what appears in the report. */
+export interface BenchAgent {
+  /** Human-readable label, e.g. "opus", "haiku", or "custom". */
+  label: string;
+  /** Shell-style command string, parsed via parseShellArgs. */
+  command: string;
 }
 
 export interface RunResult {
   task_id: string;
   arm: "baseline" | "dna";
   attempt: number;
+  /** Which agent ran this attempt. Defaults to "default" when not in matrix mode. */
+  agent_label: string;
   /** Whether all `checks` exited 0. */
   passed: boolean;
   failed_checks: string[];
@@ -43,12 +51,37 @@ export interface RunResult {
   timed_out: boolean;
 }
 
+export interface CellSummary {
+  agent_label: string;
+  arm: "baseline" | "dna";
+  attempts: number;
+  passes: number;
+  pass_rate: number;
+  pass_rate_ci: WilsonCI;
+  mean_duration_sec: number;
+  mean_output_chars: number;
+  timed_out: number;
+}
+
+export interface PerTaskAgentRow {
+  agent_label: string;
+  task_id: string;
+  baseline_pass: number;
+  dna_pass: number;
+  delta: number;
+}
+
 export interface BenchSummary {
   tasks: number;
   attempts_per_arm: number;
-  baseline: { pass_rate: number; mean_duration_sec: number; mean_output_chars: number; timed_out: number };
-  dna:      { pass_rate: number; mean_duration_sec: number; mean_output_chars: number; timed_out: number };
-  per_task: Array<{ task_id: string; baseline_pass: number; dna_pass: number; delta: number }>;
+  agents: string[];
+  /** Aggregate (all agents) — kept for backwards compatibility. */
+  baseline: CellSummary;
+  dna: CellSummary;
+  /** Per-(agent, arm) rollup. */
+  cells: CellSummary[];
+  /** Per-(agent, task) baseline/dna delta. */
+  per_task: PerTaskAgentRow[];
   warnings: string[];
 }
 
@@ -58,16 +91,55 @@ export async function loadTasks(dir: string): Promise<BenchTask[]> {
   for (const entry of entries) {
     if (!entry.endsWith(".yml") && !entry.endsWith(".yaml")) continue;
     const raw = await readFile(path.join(dir, entry), "utf8");
-    const parsed = parseYaml(raw) as Omit<BenchTask, "id">;
+    const parsed = parseYaml(raw) as Omit<BenchTask, "id"> & { invariants_expected?: unknown };
+    // `invariants_expected` was deprecated in PR #28 and is removed in P4.
+    // Accept-and-ignore so legacy YAMLs in the wild don't crash the loader.
+    if (parsed.invariants_expected !== undefined) delete parsed.invariants_expected;
+    if (!parsed.repo || !parsed.prompt || !Array.isArray(parsed.checks)) {
+      throw new Error(`bench: malformed task ${entry} (need repo, prompt, checks[])`);
+    }
     tasks.push({ id: entry.replace(/\.(yml|yaml)$/, ""), ...parsed });
   }
   return tasks;
 }
 
+/** Known weaker-agent presets. Maps a short label to a canonical claude invocation. */
+export const AGENT_PRESETS: Record<string, string> = {
+  opus: "claude -p --model claude-opus-4-7",
+  sonnet: "claude -p --model claude-sonnet-4-6",
+  haiku: "claude -p --model claude-haiku-4-5-20251001",
+};
+
+/**
+ * Parse a `--matrix` value (`"opus,sonnet,haiku"`) into agents. Unknown
+ * presets throw — silently substituting "claude -p" would hide a typo
+ * and produce a single-agent run that looks like a matrix run.
+ */
+export function parseMatrix(spec: string): BenchAgent[] {
+  const labels = spec
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (labels.length === 0) throw new Error(`--matrix needs at least one preset; got "${spec}"`);
+  return labels.map((label) => {
+    const command = AGENT_PRESETS[label];
+    if (!command) {
+      const known = Object.keys(AGENT_PRESETS).join(", ");
+      throw new Error(`unknown agent preset "${label}" (known: ${known})`);
+    }
+    return { label, command };
+  });
+}
+
 export interface RunOptions {
-  /** Override the agent command. Default: `claude -p`. */
+  /**
+   * Override the single agent command. Default: `claude -p`. Ignored if
+   * `agents` is set.
+   */
   agentCommand?: string;
-  /** Repeat each (task, arm) N times to smooth variance. Default 3. */
+  /** Explicit list of agents to run. Overrides `agentCommand`. */
+  agents?: BenchAgent[];
+  /** Repeat each (task, arm) N times to smooth variance. Default 5. */
   n?: number;
   /** Timeout per attempt in seconds. Default 300. */
   timeoutSec?: number;
@@ -79,9 +151,6 @@ export interface RunOptions {
  *   - single quotes (literal, no escapes inside)
  *   - double quotes (allows \" and \\ escapes)
  *   - backslash escape outside quotes
- * Sufficient for command strings like:
- *   claude -p --model="claude-opus-4-7"
- *   sh -c 'echo "hi there"'
  * Throws on unterminated quotes — fail loudly rather than silently mis-tokenize.
  */
 export function parseShellArgs(input: string): string[] {
@@ -168,12 +237,6 @@ async function writeDnaMcpConfig(repoPath: string): Promise<void> {
   );
 }
 
-/**
- * Returns a callable that yields a clean repo path for a single attempt and
- * a cleanup hook to dispose it. Two modes:
- *   - if repoPath is a git repo: reset it in place and return its path.
- *   - otherwise: copy it to a fresh tmpdir per attempt and return that.
- */
 async function prepareRepoForAttempt(repoPath: string): Promise<{ workPath: string; dispose: () => Promise<void> }> {
   let isRepo = false;
   try {
@@ -198,8 +261,8 @@ export async function runTask(
   arm: "baseline" | "dna",
   attempt: number,
   opts: RunOptions = {},
+  agent: BenchAgent = { label: "default", command: opts.agentCommand ?? "claude -p" },
 ): Promise<RunResult> {
-  const agentCommand = opts.agentCommand ?? "claude -p";
   const timeoutSec = opts.timeoutSec ?? 300;
   const repoPath = path.resolve(repoRoot, task.repo);
 
@@ -221,9 +284,9 @@ export async function runTask(
   let output = "";
   let timed_out = false;
   try {
-    const argv = parseShellArgs(agentCommand);
+    const argv = parseShellArgs(agent.command);
     const [bin, ...args] = argv;
-    if (!bin) throw new Error("empty agentCommand");
+    if (!bin) throw new Error(`empty agentCommand for agent ${agent.label}`);
     const { stdout } = await execFile(bin, [...args, prompt], {
       cwd: workPath,
       timeout: timeoutSec * 1000,
@@ -233,7 +296,6 @@ export async function runTask(
   } catch (err) {
     const e = err as { stdout?: string; killed?: boolean; signal?: string; code?: string | number };
     output = e.stdout ?? "";
-    // node's execFile sets killed=true and signal='SIGTERM' on timeout
     if (e.killed === true || e.signal === "SIGTERM" || e.code === "ETIMEDOUT") {
       timed_out = true;
     }
@@ -257,12 +319,18 @@ export async function runTask(
     task_id: task.id,
     arm,
     attempt,
+    agent_label: agent.label,
     passed: !timed_out && failed_checks.length === 0,
     failed_checks,
     duration_sec,
     output_chars: output.length,
     timed_out,
   };
+}
+
+function resolveAgents(opts: RunOptions): BenchAgent[] {
+  if (opts.agents && opts.agents.length > 0) return opts.agents;
+  return [{ label: "default", command: opts.agentCommand ?? "claude -p" }];
 }
 
 export async function runBench(
@@ -272,46 +340,79 @@ export async function runBench(
   opts: RunOptions = {},
 ): Promise<BenchSummary> {
   const tasks = await loadTasks(tasksDir);
-  const n = opts.n ?? 3;
+  const n = opts.n ?? 5;
+  const agents = resolveAgents(opts);
   await mkdir(outDir, { recursive: true });
 
   const results: RunResult[] = [];
-  for (const task of tasks) {
-    for (let attempt = 0; attempt < n; attempt++) {
-      for (const arm of ["baseline", "dna"] as const) {
-        const r = await runTask(repoRoot, task, arm, attempt, opts);
-        results.push(r);
-        await writeFile(
-          path.join(outDir, `${task.id}.${arm}.${attempt}.json`),
-          JSON.stringify(r, null, 2),
-        );
+  for (const agent of agents) {
+    for (const task of tasks) {
+      for (let attempt = 0; attempt < n; attempt++) {
+        for (const arm of ["baseline", "dna"] as const) {
+          const r = await runTask(repoRoot, task, arm, attempt, opts, agent);
+          results.push(r);
+          // Tag per-attempt JSON by agent so matrix runs don't clobber.
+          const tag = agents.length > 1 ? `${agent.label}.` : "";
+          await writeFile(
+            path.join(outDir, `${tag}${task.id}.${arm}.${attempt}.json`),
+            JSON.stringify(r, null, 2),
+          );
+        }
       }
     }
   }
 
-  const summary = summarize(results, n);
+  const summary = summarize(results, n, agents.map((a) => a.label));
   await writeFile(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
   await writeFile(path.join(outDir, "summary.md"), renderMarkdown(summary));
   return summary;
 }
 
-export function summarize(results: RunResult[], n: number): BenchSummary {
+function meanOf(arr: number[]): number {
+  return arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function cell(results: RunResult[], agent_label: string, arm: "baseline" | "dna"): CellSummary {
+  const passes = results.filter((r) => r.passed).length;
+  return {
+    agent_label,
+    arm,
+    attempts: results.length,
+    passes,
+    pass_rate: results.length === 0 ? 0 : passes / results.length,
+    pass_rate_ci: wilson(passes, results.length),
+    mean_duration_sec: meanOf(results.map((r) => r.duration_sec)),
+    mean_output_chars: meanOf(results.map((r) => r.output_chars)),
+    timed_out: results.filter((r) => r.timed_out).length,
+  };
+}
+
+export function summarize(results: RunResult[], n: number, agentLabels?: string[]): BenchSummary {
   const tasks = [...new Set(results.map((r) => r.task_id))];
-  const armResults = (arm: "baseline" | "dna"): RunResult[] => results.filter((r) => r.arm === arm);
+  const agents = agentLabels && agentLabels.length > 0
+    ? agentLabels
+    : [...new Set(results.map((r) => r.agent_label))];
 
-  const meanOf = (arr: number[]): number =>
-    arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
+  const cells: CellSummary[] = [];
+  for (const a of agents) {
+    for (const arm of ["baseline", "dna"] as const) {
+      cells.push(cell(results.filter((r) => r.agent_label === a && r.arm === arm), a, arm));
+    }
+  }
 
-  const baseline = armResults("baseline");
-  const dna = armResults("dna");
+  const per_task: PerTaskAgentRow[] = [];
+  for (const a of agents) {
+    for (const tid of tasks) {
+      const b = results.filter((r) => r.agent_label === a && r.arm === "baseline" && r.task_id === tid);
+      const d = results.filter((r) => r.agent_label === a && r.arm === "dna" && r.task_id === tid);
+      const bp = b.length === 0 ? 0 : b.filter((r) => r.passed).length / b.length;
+      const dp = d.length === 0 ? 0 : d.filter((r) => r.passed).length / d.length;
+      per_task.push({ agent_label: a, task_id: tid, baseline_pass: bp, dna_pass: dp, delta: dp - bp });
+    }
+  }
 
-  const per_task = tasks.map((tid) => {
-    const b = baseline.filter((r) => r.task_id === tid);
-    const d = dna.filter((r) => r.task_id === tid);
-    const bp = b.length === 0 ? 0 : b.filter((r) => r.passed).length / b.length;
-    const dp = d.length === 0 ? 0 : d.filter((r) => r.passed).length / d.length;
-    return { task_id: tid, baseline_pass: bp, dna_pass: dp, delta: dp - bp };
-  });
+  const baseline = cell(results.filter((r) => r.arm === "baseline"), "all", "baseline");
+  const dna = cell(results.filter((r) => r.arm === "dna"), "all", "dna");
 
   const warnings: string[] = [];
   if (n < 3) {
@@ -321,18 +422,10 @@ export function summarize(results: RunResult[], n: number): BenchSummary {
   return {
     tasks: tasks.length,
     attempts_per_arm: n,
-    baseline: {
-      pass_rate: baseline.length === 0 ? 0 : baseline.filter((r) => r.passed).length / baseline.length,
-      mean_duration_sec: meanOf(baseline.map((r) => r.duration_sec)),
-      mean_output_chars: meanOf(baseline.map((r) => r.output_chars)),
-      timed_out: baseline.filter((r) => r.timed_out).length,
-    },
-    dna: {
-      pass_rate: dna.length === 0 ? 0 : dna.filter((r) => r.passed).length / dna.length,
-      mean_duration_sec: meanOf(dna.map((r) => r.duration_sec)),
-      mean_output_chars: meanOf(dna.map((r) => r.output_chars)),
-      timed_out: dna.filter((r) => r.timed_out).length,
-    },
+    agents,
+    baseline,
+    dna,
+    cells,
     per_task,
     warnings,
   };
@@ -343,23 +436,61 @@ function renderMarkdown(s: BenchSummary): string {
   const lines: string[] = [];
   lines.push(`# repo-edit-bench summary`);
   lines.push("");
-  lines.push(`${s.tasks} task(s) × ${s.attempts_per_arm} attempt(s) × 2 arm(s).`);
+  lines.push(`${s.tasks} task(s) × ${s.attempts_per_arm} attempt(s) × 2 arm(s) × ${s.agents.length} agent(s) [${s.agents.join(", ")}].`);
   lines.push("");
   for (const w of s.warnings) {
     lines.push(`> WARNING: ${w}`);
   }
   if (s.warnings.length > 0) lines.push("");
-  lines.push(`| arm | pass rate | mean duration (s) | mean output (chars) | timed out |`);
-  lines.push(`|---|---|---|---|---|`);
-  lines.push(`| baseline | ${pct(s.baseline.pass_rate)} | ${s.baseline.mean_duration_sec.toFixed(1)} | ${s.baseline.mean_output_chars.toFixed(0)} | ${s.baseline.timed_out} |`);
-  lines.push(`| dna      | ${pct(s.dna.pass_rate)}      | ${s.dna.mean_duration_sec.toFixed(1)}      | ${s.dna.mean_output_chars.toFixed(0)}      | ${s.dna.timed_out} |`);
+
+  lines.push(`## Per agent × arm`);
   lines.push("");
-  lines.push(`## Per task`);
+  lines.push(`| agent | arm | pass rate (95% CI) | mean duration (s) | mean output (chars) | timed out |`);
+  lines.push(`|---|---|---|---|---|---|`);
+  for (const c of s.cells) {
+    lines.push(`| ${c.agent_label} | ${c.arm} | ${pct(c.pass_rate)} ${formatWilsonPct(c.pass_rate_ci)} | ${c.mean_duration_sec.toFixed(1)} | ${c.mean_output_chars.toFixed(0)} | ${c.timed_out} |`);
+  }
+  lines.push("");
+
+  // Agent × task matrix only when matrix mode is in play.
+  if (s.agents.length > 1 || (s.agents.length === 1 && s.agents[0] !== "default")) {
+    lines.push(`## Per agent × task (baseline → dna)`);
+    lines.push("");
+    const tasks = [...new Set(s.per_task.map((r) => r.task_id))];
+    lines.push(`| agent | ${tasks.join(" | ")} |`);
+    lines.push(`|${["---", ...tasks.map(() => "---")].join("|")}|`);
+    for (const a of s.agents) {
+      const cells = tasks.map((tid) => {
+        const row = s.per_task.find((r) => r.agent_label === a && r.task_id === tid);
+        if (!row) return "—";
+        const delta = (row.delta * 100).toFixed(0);
+        const sign = row.delta > 0 ? "+" : "";
+        return `${pct(row.baseline_pass)}→${pct(row.dna_pass)} (${sign}${delta}pp)`;
+      });
+      lines.push(`| ${a} | ${cells.join(" | ")} |`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`## Per task (aggregate across agents)`);
   lines.push("");
   lines.push(`| task | baseline | dna | delta |`);
   lines.push(`|---|---|---|---|`);
-  for (const t of s.per_task) {
-    lines.push(`| ${t.task_id} | ${pct(t.baseline_pass)} | ${pct(t.dna_pass)} | ${(t.delta * 100).toFixed(1)}pp |`);
+  const tasks = [...new Set(s.per_task.map((r) => r.task_id))];
+  for (const tid of tasks) {
+    const rows = s.per_task.filter((r) => r.task_id === tid);
+    const bp = meanOf(rows.map((r) => r.baseline_pass));
+    const dp = meanOf(rows.map((r) => r.dna_pass));
+    lines.push(`| ${tid} | ${pct(bp)} | ${pct(dp)} | ${((dp - bp) * 100).toFixed(1)}pp |`);
   }
+  lines.push("");
+
+  lines.push(`## Aggregate (all agents)`);
+  lines.push("");
+  lines.push(`| arm | pass rate (95% CI) | mean duration (s) | mean output (chars) | timed out |`);
+  lines.push(`|---|---|---|---|---|`);
+  lines.push(`| baseline | ${pct(s.baseline.pass_rate)} ${formatWilsonPct(s.baseline.pass_rate_ci)} | ${s.baseline.mean_duration_sec.toFixed(1)} | ${s.baseline.mean_output_chars.toFixed(0)} | ${s.baseline.timed_out} |`);
+  lines.push(`| dna      | ${pct(s.dna.pass_rate)} ${formatWilsonPct(s.dna.pass_rate_ci)} | ${s.dna.mean_duration_sec.toFixed(1)} | ${s.dna.mean_output_chars.toFixed(0)} | ${s.dna.timed_out} |`);
+
   return lines.join("\n") + "\n";
 }
