@@ -116,6 +116,10 @@ function lastNameOf(qualified: string): string {
 }
 
 function guessTargetFile(index: DnaIndex, edge: DnaIndex["edges"][number]): string {
+  if (edge.to_id) {
+    const byId = index.symbols.find((s) => s.id === edge.to_id);
+    if (byId) return byId.file;
+  }
   const target = index.symbols.find((s) => (s.qualified_name ?? s.name) === edge.to);
   return target?.file ?? "?";
 }
@@ -207,11 +211,20 @@ function findPyCallSites(source: string): Array<{ line: number; col: number; cal
     const line = lines[i]!;
     // Strip strings/comments crudely. Good enough for sampling.
     const stripped = line.replace(/#.*$/, "").replace(/(['"])(?:\\.|(?!\1).)*\1/g, '""');
+    // Skip `def foo(...)` and `class Foo(...)` — the parenthesis here is a
+    // signature/bases list, not a call site. Without this we'd inflate the
+    // recall denominator with hundreds of declarations the parser already
+    // emits as symbols (not call edges).
+    if (/^\s*(def|class)\s+[A-Za-z_]/.test(stripped)) continue;
     let m: RegExpExecArray | null;
     callRe.lastIndex = 0;
     while ((m = callRe.exec(stripped)) !== null) {
       const name = m[1]!;
       if (skip.has(name)) continue;
+      // Skip attribute calls (`obj.foo()`, `mod.Cls()`) — DNA's parser
+      // intentionally doesn't track them, so they don't belong in the recall
+      // denominator. Mirrors the TS sibling's PropertyAccessExpression skip.
+      if (m.index > 0 && stripped[m.index - 1] === ".") continue;
       sites.push({ line: i + 1, col: m.index, callee: name });
     }
   }
@@ -575,7 +588,7 @@ export async function verifyIndexPython(
         (e) => e.file === site.file && Math.abs((e.line ?? 0) - site.line) <= 1 && lastNameOf(e.to) === site.callee,
       );
       if (matched) recallHit++;
-      else if (worst.length < 10) {
+      else if (worst.length < 40) {
         worst.push({
           from_file: site.file,
           from_line: site.line,

@@ -1,0 +1,11 @@
+{
+  "task_id": "004-hidden-caller",
+  "arm": "baseline",
+  "attempt": 2,
+  "agent_label": "sonnet",
+  "passed": true,
+  "failed_checks": [],
+  "duration_sec": 27.898,
+  "output_chars": 216,
+  "timed_out": false
+}

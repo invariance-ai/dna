@@ -103,16 +103,19 @@ export async function loadTasks(dir: string): Promise<BenchTask[]> {
   return tasks;
 }
 
-/** Known weaker-agent presets. Maps a short label to a canonical claude invocation. */
+/** Known weaker-agent presets. Maps a short label to a canonical claude invocation.
+ *  `--permission-mode bypassPermissions` is required so the headless agent can
+ *  actually Edit/Write files — without it every bench task is a no-op and the
+ *  pass-rate report is meaningless. */
 export const AGENT_PRESETS: Record<string, string> = {
-  opus: "claude -p --model claude-opus-4-7",
-  sonnet: "claude -p --model claude-sonnet-4-6",
-  haiku: "claude -p --model claude-haiku-4-5-20251001",
+  opus: "claude -p --model claude-opus-4-7 --permission-mode bypassPermissions",
+  sonnet: "claude -p --model claude-sonnet-4-6 --permission-mode bypassPermissions",
+  haiku: "claude -p --model claude-haiku-4-5-20251001 --permission-mode bypassPermissions",
 };
 
 /**
  * Parse a `--matrix` value (`"opus,sonnet,haiku"`) into agents. Unknown
- * presets throw — silently substituting "claude -p" would hide a typo
+ * presets throw — silently substituting "claude -p --permission-mode bypassPermissions" would hide a typo
  * and produce a single-agent run that looks like a matrix run.
  */
 export function parseMatrix(spec: string): BenchAgent[] {
@@ -238,20 +241,34 @@ async function writeDnaMcpConfig(repoPath: string): Promise<void> {
 }
 
 async function prepareRepoForAttempt(repoPath: string): Promise<{ workPath: string; dispose: () => Promise<void> }> {
-  let isRepo = false;
-  try {
-    await execFile("git", ["-C", repoPath, "rev-parse", "--is-inside-work-tree"]);
-    isRepo = true;
-  } catch { /* not a git repo */ }
   try { await stat(repoPath); } catch {
     throw new Error(`bench: task.repo path does not exist: ${repoPath}`);
   }
-  if (isRepo) {
+  // Treat the path as its own repo only when it's the toplevel of a git repo.
+  // Otherwise (e.g. `examples/multi-symbol` inside the DNA monorepo) the
+  // headless agent's cwd would be a subdir of a much larger working tree —
+  // and `--permission-mode bypassPermissions` would happily let it rename
+  // symbols across the parent repo. Always copy to a fresh tmpdir in that
+  // case so edits stay sandboxed.
+  let isOwnRepo = false;
+  try {
+    const { stdout } = await execFile("git", ["-C", repoPath, "rev-parse", "--show-toplevel"]);
+    isOwnRepo = path.resolve(stdout.trim()) === path.resolve(repoPath);
+  } catch { /* not a git repo */ }
+  if (isOwnRepo) {
     await resetWorkingTree(repoPath);
     return { workPath: repoPath, dispose: async () => { /* in-place; reset on next attempt */ } };
   }
   const tmp = await mkdtemp(path.join(os.tmpdir(), "dna-bench-"));
   await cp(repoPath, tmp, { recursive: true });
+  // Init a git repo in the copy so resetWorkingTree-style cleanup works for
+  // subsequent attempts and so the agent sees a real repo (matters for some
+  // tools that probe `git rev-parse`).
+  try {
+    await execFile("git", ["-C", tmp, "init", "-q"]);
+    await execFile("git", ["-C", tmp, "add", "."]);
+    await execFile("git", ["-C", tmp, "-c", "user.email=bench@dna.local", "-c", "user.name=bench", "commit", "-qm", "bench fixture"]);
+  } catch { /* best effort */ }
   return { workPath: tmp, dispose: async () => { await rm(tmp, { recursive: true, force: true }); } };
 }
 
@@ -261,7 +278,7 @@ export async function runTask(
   arm: "baseline" | "dna",
   attempt: number,
   opts: RunOptions = {},
-  agent: BenchAgent = { label: "default", command: opts.agentCommand ?? "claude -p" },
+  agent: BenchAgent = { label: "default", command: opts.agentCommand ?? "claude -p --permission-mode bypassPermissions" },
 ): Promise<RunResult> {
   const timeoutSec = opts.timeoutSec ?? 300;
   const repoPath = path.resolve(repoRoot, task.repo);
@@ -330,7 +347,7 @@ export async function runTask(
 
 function resolveAgents(opts: RunOptions): BenchAgent[] {
   if (opts.agents && opts.agents.length > 0) return opts.agents;
-  return [{ label: "default", command: opts.agentCommand ?? "claude -p" }];
+  return [{ label: "default", command: opts.agentCommand ?? "claude -p --permission-mode bypassPermissions" }];
 }
 
 export async function runBench(

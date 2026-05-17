@@ -1,0 +1,14 @@
+{
+  "task_id": "005-invariant-respect",
+  "arm": "baseline",
+  "attempt": 0,
+  "agent_label": "sonnet",
+  "passed": false,
+  "failed_checks": [
+    "grep -A 40 'function createPartialRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount'",
+    "grep -A 40 'function replayRefund' src/refunds.ts | grep -Eq '50000|50_000|validateRefund|MAX_REFUND|validateAmount'"
+  ],
+  "duration_sec": 40.309,
+  "output_chars": 669,
+  "timed_out": false
+}

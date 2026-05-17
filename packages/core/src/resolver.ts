@@ -75,12 +75,29 @@ export async function buildResolver(
     exportsByFile.set(pf.path, exports);
   }
 
+  // Python source roots: directories under which top-level packages live.
+  // Heuristic: every parent of a package root (a dir whose `__init__.py` is
+  // parsed and whose own parent does NOT contain `__init__.py`) is a source
+  // root. Lets `from flask import x` resolve to `<root>/src/flask/__init.py`
+  // and `from django.db import models` to `<root>/django/db/models.py`.
+  const pythonRoots = discoverPythonRoots(filesByAbs, root);
+
   function resolveModuleSpec(
     fromAbsFile: string,
     spec: string,
   ): string | undefined {
     const fromDir = path.dirname(fromAbsFile);
-    // 1. Relative
+    // 1a. Python relative module: `.helpers`, `..views`, `...db.models`.
+    //     Each leading dot walks up one package; remainder is dotted path.
+    if (fromAbsFile.endsWith(".py") && /^\.+[A-Za-z_]/.test(spec)) {
+      const dots = spec.match(/^\.+/)![0].length;
+      const remainder = spec.slice(dots);
+      let baseDir = fromDir;
+      for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
+      const segments = remainder.split(".");
+      return resolveFileLike(path.join(baseDir, ...segments));
+    }
+    // 1b. Relative (TS/JS)
     if (spec.startsWith(".")) {
       const base = path.resolve(fromDir, spec);
       return resolveFileLike(base);
@@ -108,6 +125,16 @@ export async function buildResolver(
     if (tsBaseUrl) {
       const file = resolveFileLike(path.resolve(root, tsBaseUrl, spec));
       if (file) return file;
+    }
+    // 5. Python dotted absolute import (e.g. `flask`, `flask.helpers`,
+    //    `django.db.models`). Walk discovered python roots.
+    if (fromAbsFile.endsWith(".py") && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(spec)) {
+      const segments = spec.split(".");
+      for (const baseDir of pythonRoots) {
+        const base = path.join(baseDir, ...segments);
+        const file = resolveFileLike(base);
+        if (file) return file;
+      }
     }
     return undefined;
   }
@@ -137,14 +164,26 @@ export async function buildResolver(
     if (depth > 3) return undefined;
     const fileExports = exportsByFile.get(targetFile);
     if (fileExports?.has(exportedName)) return fileExports.get(exportedName)!;
-    // Chase re-exports
     const pf = filesByAbs.get(targetFile);
-    if (!pf?.re_exports) return undefined;
-    for (const rx of pf.re_exports) {
+    if (!pf) return undefined;
+    // Chase TS re-exports
+    for (const rx of pf.re_exports ?? []) {
       if (rx.exported === exportedName || rx.exported === "*") {
         const nextFile = resolveModuleSpec(targetFile, rx.source);
         if (!nextFile) continue;
         const sought = rx.exported === "*" ? exportedName : rx.local ?? exportedName;
+        const found = resolveExport(nextFile, sought, depth + 1);
+        if (found) return found;
+      }
+    }
+    // Python: plain top-level imports in __init__.py act as re-exports
+    // (`from .helpers import redirect` makes `pkg.redirect` available).
+    if (targetFile.endsWith("/__init__.py")) {
+      for (const imp of pf.imports ?? []) {
+        if (imp.local !== exportedName) continue;
+        const nextFile = resolveModuleSpec(targetFile, imp.source);
+        if (!nextFile) continue;
+        const sought = imp.imported ?? imp.local;
         const found = resolveExport(nextFile, sought, depth + 1);
         if (found) return found;
       }
@@ -186,6 +225,35 @@ export async function buildResolver(
       return { status: "unresolved", reason: "no binding" };
     },
   };
+}
+
+function discoverPythonRoots(
+  filesByAbs: Map<string, ParsedFile>,
+  root: string,
+): string[] {
+  // Find every `__init__.py` whose parent directory is a top-level package
+  // (i.e., its grandparent is NOT also a package). That grandparent is a
+  // Python source root. Common shapes:
+  //   src/flask/__init__.py        → root = "<repo>/src"
+  //   django/__init__.py           → root = "<repo>"
+  //   pkg/sub/__init__.py only     → root = "<repo>" (pkg is the top package)
+  const roots = new Set<string>();
+  const isPackageDir = (dir: string): boolean =>
+    filesByAbs.has(path.join(dir, "__init__.py"));
+  for (const abs of filesByAbs.keys()) {
+    if (!abs.endsWith("/__init__.py")) continue;
+    let pkgDir = path.dirname(abs);
+    // Walk up while parents are still packages — find the top-level package.
+    while (isPackageDir(path.dirname(pkgDir))) {
+      pkgDir = path.dirname(pkgDir);
+    }
+    roots.add(path.dirname(pkgDir));
+  }
+  // Always include repo root as a fallback: handles single-file modules at
+  // the top level (e.g., a `foo.py` next to packages).
+  roots.add(root);
+  // Stable order: longer/more-specific roots first so `src/` wins over `.`.
+  return [...roots].sort((a, b) => b.length - a.length);
 }
 
 function matchAlias(pattern: string, spec: string): string | undefined {
