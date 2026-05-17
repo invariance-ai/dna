@@ -157,11 +157,69 @@ audit [options]
 
 ## `bench`
 
-Run repo-edit-bench (harness lands in v0.2)
+Repo-edit-bench: A/B coding agents with and without DNA
 
 ```
-bench [options]
+bench [options] [command]
 ```
+
+### `bench tasks`
+
+List bench tasks
+
+```
+bench tasks [options]
+```
+
+**Options:**
+
+- `--dir <path>` — Tasks directory (default bench/repo-edit-bench/tasks)
+- `--root <path>` — Repo root (default: cwd)
+
+### `bench run`
+
+Run bench: each task twice (baseline + dna) × n attempts
+
+```
+bench run [options]
+```
+
+**Options:**
+
+- `--tasks <path>` — Tasks directory (default bench/repo-edit-bench/tasks)
+- `--out <path>` — Output directory (default bench/results/<timestamp>)
+- `--agent <cmd>` — Agent command (default: `claude -p`)
+- `--n <n>` — Attempts per (task, arm). Default 3 (minimum for meaningful variance)
+- `--timeout <sec>` — Per-attempt timeout in seconds. Default 300
+- `--root <path>` — Repo root (default: cwd)
+
+### `bench report`
+
+Print the markdown report from a previous `dna bench run`
+
+```
+bench report [options]
+```
+
+**Options:**
+
+- `--run <path>` — Results directory (default: latest under bench/results/)
+- `--root <path>` — Repo root (default: cwd)
+
+## `brief`
+
+Pre-finalize briefing: changed symbols + invariants + notes + tests + 'no tests' warnings. Call before declaring done.
+
+```
+brief [options]
+```
+
+**Options:**
+
+- `--base <ref>` — Diff base (default HEAD) *(default: "HEAD")*
+- `--max-symbols <n>` — Cap symbols processed (default 20)
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
 
 ## `capture-directive`
 
@@ -623,6 +681,9 @@ gate [options]
 
 - `--diff` — Gate the current working diff *(default: false)*
 - `--base <ref>` — Diff base (default HEAD) *(default: "HEAD")*
+- `--changed` — Only evaluate symbols whose lines actually changed (hunk-level)
+- `--watch` — Stream gate findings as files change (long-running)
+- `--debounce <ms>` — Debounce window for --watch (default 500ms)
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
@@ -682,6 +743,7 @@ init [options]
 **Options:**
 
 - `--force` — Overwrite existing files
+- `--seed [tier]` — Mine repo history for candidate notes/invariants (safe|medium|aggressive, default safe)
 - `--root <path>` — Repo root (default: cwd)
 
 ## `install`
@@ -705,6 +767,7 @@ install claude [options]
 - `--force` — Overwrite existing dna-managed Claude files
 - `--skip-claude-md` — Do not append dna instructions to CLAUDE.md
 - `--use-global` — Generate hooks that call `dna` directly (requires global install)
+- `--dry-run` — Show what would be written without touching disk
 - `--root <path>` — Repo root (default: cwd)
 
 ### `install codex`
@@ -720,6 +783,7 @@ install codex [options]
 - `--force` — Overwrite existing dna-managed Codex files
 - `--skip-agents-md` — Do not append dna instructions to AGENTS.md
 - `--use-global` — Configure Codex to call `dna` directly (requires global install)
+- `--dry-run` — Show what would be written without touching disk
 - `--root <path>` — Repo root (default: cwd)
 
 ### `install cursor`
@@ -735,6 +799,7 @@ install cursor [options]
 - `--force` — Overwrite existing dna-managed Cursor files
 - `--skip-mcp` — Do not write .cursor/mcp.json (rule file only)
 - `--use-global` — Configure MCP to call `dna` directly (requires global install)
+- `--dry-run` — Show what would be written without touching disk
 - `--root <path>` — Repo root (default: cwd)
 
 ## `invariant`
@@ -1067,6 +1132,20 @@ record-failure [options]
 - `--json` — Emit JSON
 - `--root <path>` — Repo root (default: cwd)
 
+## `review-diff`
+
+Final-call invariant check: gate the dirty diff before declaring done
+
+```
+review-diff [options]
+```
+
+**Options:**
+
+- `--base <ref>` — Diff base (default HEAD) *(default: "HEAD")*
+- `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
 ## `review-memory`
 
 Maintainer queue: promotions, stale entries, open questions
@@ -1313,6 +1392,20 @@ validate [options]
 - `--limit <n>` — Max stale paths to list *(default: 20)*
 - `--root <path>` — Repo root (default: cwd)
 
+## `validate-knowledge`
+
+Flag notes/decisions/invariants whose anchor symbols moved, vanished, or expired
+
+```
+validate-knowledge [options]
+```
+
+**Options:**
+
+- `--json` — Emit JSON
+- `--legacy-ok` — Suppress no_anchor_id findings for legacy entries
+- `--root <path>` — Repo root (default: cwd)
+
 ## `verify`
 
 Review provenance: list unverified notes, or verify a note by id
@@ -1353,6 +1446,21 @@ verify-contract [options]
 - `--diff` — Verify against the working-tree diff *(default: true)*
 - `--base <ref>` — Diff base (default HEAD) *(default: "HEAD")*
 - `--json` — Emit JSON
+- `--root <path>` — Repo root (default: cwd)
+
+## `verify-index`
+
+Score DNA's symbol graph against TypeScript's type checker (precision/recall/coverage)
+
+```
+verify-index [options]
+```
+
+**Options:**
+
+- `--sample <n>` — Sampled edges & callsites (default 200)
+- `--no-cache` — Don't write the cached report
+- `--json` — Emit JSON instead of text
 - `--root <path>` — Repo root (default: cwd)
 
 ## `waive`

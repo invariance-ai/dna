@@ -9,19 +9,29 @@ interface InstallOpts extends RootOption {
   force?: boolean;
   skipClaudeMd?: boolean;
   useGlobal?: boolean;
+  dryRun?: boolean;
 }
 
 interface CodexInstallOpts extends RootOption {
   force?: boolean;
   skipAgentsMd?: boolean;
   useGlobal?: boolean;
+  dryRun?: boolean;
 }
 
 interface CursorInstallOpts extends RootOption {
   force?: boolean;
   skipMcp?: boolean;
   useGlobal?: boolean;
+  dryRun?: boolean;
 }
+
+/**
+ * When true, helpers log what they *would* write instead of touching the disk.
+ * Module-level rather than threaded through every helper to keep the install
+ * surface minimal — set before each install call and cleared after.
+ */
+let DRY_RUN = false;
 
 /** Command prefix for hooks. npx-by-default keeps the global install optional. */
 function dnaCmd(useGlobal: boolean): string {
@@ -37,20 +47,26 @@ export function registerInstall(program: Command): void {
       .description("Install Claude Code CLI-first instructions, skill, and hooks")
       .option("--force", "Overwrite existing dna-managed Claude files")
       .option("--skip-claude-md", "Do not append dna instructions to CLAUDE.md")
-      .option("--use-global", "Generate hooks that call `dna` directly (requires global install)"),
+      .option("--use-global", "Generate hooks that call `dna` directly (requires global install)")
+      .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: InstallOpts) => {
     const root = resolveRoot(opts);
-    await runInstallClaude(root, {
-      force: !!opts.force,
-      skipClaudeMd: !!opts.skipClaudeMd,
-      useGlobal: !!opts.useGlobal,
-    });
-    console.log("");
-    console.log(kleur.green("installed") + " Claude Code CLI-first dna integration");
-    console.log(kleur.dim(`Hooks call: ${dnaCmd(!!opts.useGlobal)}`));
-    console.log(
-      kleur.dim("Hooks fire on session start, prompts, edits, failures, and turn end."),
-    );
+    DRY_RUN = !!opts.dryRun;
+    try {
+      await runInstallClaude(root, {
+        force: !!opts.force,
+        skipClaudeMd: !!opts.skipClaudeMd,
+        useGlobal: !!opts.useGlobal,
+      });
+      console.log("");
+      console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Claude Code CLI-first dna integration");
+      console.log(kleur.dim(`Hooks call: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(
+        kleur.dim("Hooks fire on session start, prompts, edits, failures, brief on stop, and turn end."),
+      );
+    } finally {
+      DRY_RUN = false;
+    }
   });
 
   addRootOption(
@@ -59,18 +75,24 @@ export function registerInstall(program: Command): void {
       .description("Install Codex CLI integration: AGENTS.md, .codex/config.toml notify + MCP")
       .option("--force", "Overwrite existing dna-managed Codex files")
       .option("--skip-agents-md", "Do not append dna instructions to AGENTS.md")
-      .option("--use-global", "Configure Codex to call `dna` directly (requires global install)"),
+      .option("--use-global", "Configure Codex to call `dna` directly (requires global install)")
+      .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: CodexInstallOpts) => {
     const root = resolveRoot(opts);
-    await runInstallCodex(root, {
-      force: !!opts.force,
-      skipAgentsMd: !!opts.skipAgentsMd,
-      useGlobal: !!opts.useGlobal,
-    });
-    console.log("");
-    console.log(kleur.green("installed") + " Codex CLI dna integration");
-    console.log(kleur.dim(`Notify hook + MCP server use: ${dnaCmd(!!opts.useGlobal)}`));
-    console.log(kleur.dim("Codex CLI has no PreToolUse hook; AGENTS.md teaches it to run `dna prepare` like `rg`."));
+    DRY_RUN = !!opts.dryRun;
+    try {
+      await runInstallCodex(root, {
+        force: !!opts.force,
+        skipAgentsMd: !!opts.skipAgentsMd,
+        useGlobal: !!opts.useGlobal,
+      });
+      console.log("");
+      console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Codex CLI dna integration");
+      console.log(kleur.dim(`Notify hook + MCP server use: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(kleur.dim("Codex CLI has no PreToolUse hook; AGENTS.md teaches it to run `dna prepare` and `dna brief` like `rg`."));
+    } finally {
+      DRY_RUN = false;
+    }
   });
 
   addRootOption(
@@ -79,18 +101,24 @@ export function registerInstall(program: Command): void {
       .description("Install Cursor integration: .cursor/rules/dna.mdc + .cursor/mcp.json")
       .option("--force", "Overwrite existing dna-managed Cursor files")
       .option("--skip-mcp", "Do not write .cursor/mcp.json (rule file only)")
-      .option("--use-global", "Configure MCP to call `dna` directly (requires global install)"),
+      .option("--use-global", "Configure MCP to call `dna` directly (requires global install)")
+      .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: CursorInstallOpts) => {
     const root = resolveRoot(opts);
-    await runInstallCursor(root, {
-      force: !!opts.force,
-      skipMcp: !!opts.skipMcp,
-      useGlobal: !!opts.useGlobal,
-    });
-    console.log("");
-    console.log(kleur.green("installed") + " Cursor dna integration");
-    console.log(kleur.dim(`MCP server uses: ${dnaCmd(!!opts.useGlobal)}`));
-    console.log(kleur.dim("Cursor has no shell hooks; .cursor/rules/dna.mdc teaches the agent to run `dna prepare` before edits."));
+    DRY_RUN = !!opts.dryRun;
+    try {
+      await runInstallCursor(root, {
+        force: !!opts.force,
+        skipMcp: !!opts.skipMcp,
+        useGlobal: !!opts.useGlobal,
+      });
+      console.log("");
+      console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Cursor dna integration");
+      console.log(kleur.dim(`MCP server uses: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(kleur.dim("Cursor has no shell hooks; .cursor/rules/dna.mdc teaches the agent to run `dna prepare` before edits and `dna brief` after."));
+    } finally {
+      DRY_RUN = false;
+    }
   });
 }
 
@@ -150,6 +178,13 @@ async function writeManagedFile(
   content: string,
   force: boolean,
 ): Promise<void> {
+  if (DRY_RUN) {
+    let exists = false;
+    try { await access(file); exists = true; } catch { /* missing */ }
+    const verb = exists && !force ? "would skip (exists)" : exists ? "would overwrite" : "would write";
+    console.log(kleur.yellow(`${verb}  `) + path.relative(root, file) + kleur.dim(`  (${content.length} bytes)`));
+    return;
+  }
   await mkdir(path.dirname(file), { recursive: true });
   if (!force) {
     try {
@@ -175,6 +210,11 @@ async function upsertAgentMd(root: string, filename: string): Promise<void> {
   const next = existing.includes("<!-- dna:start -->")
     ? existing.replace(/<!-- dna:start -->[\s\S]*?<!-- dna:end -->\n?/m, AGENT_INSTRUCTIONS)
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${AGENT_INSTRUCTIONS}`;
+  if (DRY_RUN) {
+    const verb = existing.includes("<!-- dna:start -->") ? "would refresh dna block in" : existing ? "would append dna block to" : "would create";
+    console.log(kleur.yellow(`${verb}  `) + path.relative(root, file));
+    return;
+  }
   await writeFile(file, next);
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }
@@ -269,6 +309,10 @@ function claudeSettings(cmd: string): unknown {
                 `if ${cmd} validate --quiet --root "$PWD" >/dev/null 2>&1; then ` +
                 `${cmd} feature attribute --git-diff --root "$PWD"${silent}; ` +
                 `fi; ` +
+                // Non-blocking pre-finalize brief: prints to stderr so it shows in
+                // the agent's transcript without altering the user-visible result.
+                // Never fails the hook (|| true), regardless of brief exit code.
+                `${cmd} brief --root "$PWD" 1>&2 2>/dev/null || true; ` +
                 `${cmd} session end --root "$PWD"${silent}`,
             },
           ],
@@ -285,7 +329,7 @@ function claudeSettings(cmd: string): unknown {
  */
 async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean): Promise<void> {
   const file = path.join(root, ".codex/config.toml");
-  await mkdir(path.dirname(file), { recursive: true });
+  if (!DRY_RUN) await mkdir(path.dirname(file), { recursive: true });
   let existing = "";
   try {
     existing = await readFile(file, "utf8");
@@ -315,6 +359,11 @@ async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean):
   const next = existing.includes("# dna:start")
     ? existing.replace(/# dna:start[\s\S]*?# dna:end\n?/m, block)
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${block}`;
+  if (DRY_RUN) {
+    const verb = existing.includes("# dna:start") ? "would refresh dna block in" : existing ? "would append dna block to" : "would create";
+    console.log(kleur.yellow(`${verb}  `) + path.relative(root, file));
+    return;
+  }
   await writeFile(file, next);
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }
@@ -342,6 +391,10 @@ async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> 
     ? { command: "dna", args: ["serve"] }
     : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
   const next = { ...existing, mcpServers: servers };
+  if (DRY_RUN) {
+    console.log(kleur.yellow(`would upsert mcpServers.dna in  `) + path.relative(root, file));
+    return;
+  }
   await writeFile(file, JSON.stringify(next, null, 2) + "\n");
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }
@@ -353,7 +406,7 @@ async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> 
  */
 async function upsertCursorMcp(root: string, useGlobal: boolean): Promise<void> {
   const file = path.join(root, ".cursor/mcp.json");
-  await mkdir(path.dirname(file), { recursive: true });
+  if (!DRY_RUN) await mkdir(path.dirname(file), { recursive: true });
   let existing: Record<string, unknown> = {};
   try {
     const raw = await readFile(file, "utf8");
@@ -367,6 +420,10 @@ async function upsertCursorMcp(root: string, useGlobal: boolean): Promise<void> 
     ? { command: "dna", args: ["serve"] }
     : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
   const next = { ...existing, mcpServers: servers };
+  if (DRY_RUN) {
+    console.log(kleur.yellow(`would upsert mcpServers.dna in  `) + path.relative(root, file));
+    return;
+  }
   await writeFile(file, JSON.stringify(next, null, 2) + "\n");
   console.log(kleur.green(`wrote   ${path.relative(root, file)}`));
 }

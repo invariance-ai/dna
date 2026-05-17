@@ -30,6 +30,7 @@ export * from "./lessons.js";
 export * from "./git_diff.js";
 export * from "./waivers.js";
 export * from "./gate.js";
+export * from "./brief.js";
 export * from "./pulse.js";
 export * from "./seed.js";
 export * from "./sync.js";

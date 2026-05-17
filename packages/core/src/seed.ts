@@ -136,26 +136,33 @@ async function gitLog(root: string, n: number): Promise<CommitInfo[]> {
 
 const FIX_RE = /^(?:fix|bug|hotfix|revert|patch)\b/i;
 const DECISION_RE = /\b(?:chose|chosen|decided|prefer|over|instead of|rejected)\b/i;
+// Conventional Commits prefix: `type(scope): subject` or `type!: subject`.
+// We use the scope (when present) as a feature/area hint on applies_to so
+// reviewers can route the proposal to the right slice of the repo.
+const CONVENTIONAL_RE = /^([a-z]+)(?:\(([^)]+)\))?!?:\s*(.*)$/i;
 
 function commitToProposal(c: CommitInfo): SeedProposal | null {
+  const conv = CONVENTIONAL_RE.exec(c.subject);
+  const scope = conv?.[2]?.trim();
+  const appliesTo = scope ? [scope] : [];
   if (FIX_RE.test(c.subject)) {
     return {
       kind: "note",
-      applies_to: [],
+      applies_to: appliesTo,
       text: c.subject,
       evidence_link: c.sha,
       source: "git",
-      confidence: 0.4,
+      confidence: scope ? 0.5 : 0.4,
     };
   }
   if (DECISION_RE.test(c.subject) || DECISION_RE.test(c.body)) {
     return {
       kind: "decision",
-      applies_to: [],
+      applies_to: appliesTo,
       text: c.subject,
       evidence_link: c.sha,
       source: "git",
-      confidence: 0.5,
+      confidence: scope ? 0.6 : 0.5,
     };
   }
   return null;

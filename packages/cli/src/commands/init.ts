@@ -70,7 +70,18 @@ export async function runInitCore(root: string, opts: InitOpts): Promise<InitRes
   return { writes };
 }
 
-export async function seedCandidates(root: string, tier: SeedTier): Promise<{ count: number; path: string }> {
+export interface SeedSample {
+  kind: string;
+  text: string;
+  source: string;
+  confidence: number;
+  applies_to?: string[];
+}
+
+export async function seedCandidates(
+  root: string,
+  tier: SeedTier,
+): Promise<{ count: number; path: string; sample: SeedSample[] }> {
   const cfg = SEED_TIER_DEFAULTS[tier];
   const result = await seed(root, {
     maxCommits: cfg.maxCommits,
@@ -92,7 +103,17 @@ export async function seedCandidates(root: string, tier: SeedTier): Promise<{ co
     notes,
     invariants,
   }));
-  return { count: filtered.length, path: path.relative(root, out) };
+  const sample = [...filtered]
+    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+    .slice(0, 3)
+    .map((p) => ({
+      kind: p.kind,
+      text: p.text,
+      source: p.source,
+      confidence: p.confidence ?? 0,
+      applies_to: p.applies_to,
+    }));
+  return { count: filtered.length, path: path.relative(root, out), sample };
 }
 
 export function registerInit(program: Command): void {
@@ -124,8 +145,20 @@ export function registerInit(program: Command): void {
       console.log(kleur.dim(`\nmining seed candidates (tier=${tier})…`));
       const r = await seedCandidates(root, tier);
       console.log(kleur.green(`wrote   `) + r.path + kleur.dim(`  (${r.count} candidates)`));
-      console.log(kleur.yellow(`note: candidates are written to .dna/candidates/ for manual review — they are NOT auto-promoted.`));
-      console.log(kleur.dim(`Next: review with \`dna seed review\` and promote with \`dna seed accept\`.`));
+      if (r.sample.length > 0) {
+        console.log(kleur.dim(`\nTop ${r.sample.length} sample (by confidence):`));
+        for (const s of r.sample) {
+          const tgt = s.applies_to && s.applies_to.length > 0 ? ` [${s.applies_to.join(", ")}]` : "";
+          const text = s.text.length > 80 ? s.text.slice(0, 77) + "…" : s.text;
+          console.log(
+            "  " + kleur.cyan(s.kind) + " " +
+            kleur.dim(`(${s.source}, conf ${s.confidence.toFixed(2)})`) +
+            kleur.bold(tgt) + " — " + text,
+          );
+        }
+      }
+      console.log(kleur.yellow(`\nnote: candidates are written to .dna/candidates/ for manual review — they are NOT auto-promoted.`));
+      console.log(kleur.dim(`Next: open ${r.path} to review, then run \`dna seed --apply\` to promote into .dna/notes and .dna/decisions.`));
     }
     console.log("");
     console.log(`Next: ${kleur.bold("dna wizard")} to wire agents, or ${kleur.bold("dna index")} to build the symbol graph.`);

@@ -39,6 +39,8 @@ type Alias = string;
     const calls = parsed.call_sites.map((c) => `${c.from}->${c.callee_name}`).sort();
     expect(calls).toContain("Foo.bar->baz");
     expect(calls).toContain("arrow->baz");
+    // this.method() now resolves to ClassName.method via the classStack
+    expect(calls).toContain("Foo.qux->Foo.bar");
   });
 
   it("extracts Python classes, methods, functions, and call sites", async () => {
@@ -62,7 +64,51 @@ def baz():
 
     const calls = parsed.call_sites.map((c) => `${c.from}->${c.callee_name}`).sort();
     expect(calls).toContain("Foo.bar->baz");
-    // self.bar() is an attribute call — intentionally skipped (see parser_ts).
+    // self.method() now resolves to ClassName.method via classStack
+    expect(calls).toContain("Foo.qux->Foo.bar");
+  });
+
+  it("extracts tsx components and decorated TS classes", async () => {
+    const file = path.join(dir, "comp.tsx");
+    await writeFile(file, `
+function Button({ label }: { label: string }) {
+  return <button>{label}</button>;
+}
+export const Card = () => <div><Button label="x" /></div>;
+
+function logged(_t: unknown, _k: string) { /* decorator */ }
+
+@logged
+class Service {
+  @logged
+  run() { return 1; }
+}
+`);
+    const parsed = await parseFile(file);
+    const names = parsed.symbols.map((s) => `${s.kind}:${s.qualified_name}`).sort();
+    expect(names).toContain("function:Button");
+    expect(names).toContain("function:Card");
+    expect(names).toContain("class:Service");
+    expect(names).toContain("method:Service.run");
+  });
+
+  it("extracts Python decorated methods and @property", async () => {
+    const file = path.join(dir, "decorated.py");
+    await writeFile(file, `
+class Box:
+    @property
+    def width(self):
+        return self._w
+
+    @staticmethod
+    def make():
+        return Box()
+`);
+    const parsed = await parseFile(file);
+    const names = parsed.symbols.map((s) => `${s.kind}:${s.qualified_name}`).sort();
+    expect(names).toContain("class:Box");
+    expect(names).toContain("method:Box.width");
+    expect(names).toContain("method:Box.make");
   });
 
   it("falls back to regex for unsupported extensions (.go)", async () => {

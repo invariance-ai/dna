@@ -38,6 +38,38 @@ export function registerPrepare(program: Command): void {
       }
 
       let symbol = symbolArg;
+      // --from-prompt is now an alias of --intent; keep both for backcompat.
+      const intentText = (opts.fromPrompt && opts.fromPrompt.trim())
+        || (opts.intent && opts.intent !== "(unspecified)" ? opts.intent : undefined);
+      let candidates: Array<{ symbol: string; score: number; via: string }> = [];
+      let pickedVia: string | undefined;
+      let pickedScore: number | undefined;
+      let lowConfidence = false;
+      // Intent wins over --feature when its top match is high-confidence (>=85).
+      // Otherwise --feature wins (existing behavior). This lets natural-language
+      // intent narrow a feature to the right symbol without overriding when
+      // confidence is mediocre.
+      const INTENT_OVERRIDES_FEATURE = 85;
+      let intentMatchesAttempted = false;
+      if (!symbol && intentText) {
+        const matches = await inferSymbols(root, intentText, { limit: 5 });
+        intentMatchesAttempted = true;
+        if (matches.length > 0) {
+          candidates = matches.map((m) => ({
+            symbol: m.symbol.qualified_name ?? m.symbol.name,
+            score: m.score,
+            via: m.via,
+          }));
+          const top = matches[0]!;
+          if (!opts.feature || top.score >= INTENT_OVERRIDES_FEATURE) {
+            symbol = top.symbol.qualified_name ?? top.symbol.name;
+            pickedVia = top.via;
+            pickedScore = top.score;
+            const LOW_CONFIDENCE_THRESHOLD = 70;
+            lowConfidence = candidates.length === 1 && top.score < LOW_CONFIDENCE_THRESHOLD;
+          }
+        }
+      }
       if (!symbol && opts.feature) {
         const top = await topSymbols(root, opts.feature, 1);
         if (top.length === 0) throw new Error(`feature "${opts.feature}" has no symbols (run \`dna feature attribute\` first)`);
@@ -46,50 +78,34 @@ export function registerPrepare(program: Command): void {
         const tail = hash >= 0 ? id.slice(hash + 1) : id;
         const colon = tail.lastIndexOf(":");
         symbol = colon > 0 ? tail.slice(0, colon) : tail;
+        pickedVia = "feature-top";
         if (!opts.json) {
           console.error(kleur.dim(`using top symbol "${symbol}" from feature "${opts.feature}"`));
         }
       }
-      // --from-prompt is now an alias of --intent; keep both for backcompat.
-      const intentText = (opts.fromPrompt && opts.fromPrompt.trim())
-        || (opts.intent && opts.intent !== "(unspecified)" ? opts.intent : undefined);
-      let candidates: Array<{ symbol: string; score: number; via: string }> = [];
-      let lowConfidence = false;
-      if (!symbol && intentText) {
-        const matches = await inferSymbols(root, intentText, { limit: 5 });
-        if (matches.length === 0) {
-          throw new Error(`no symbol matches for intent; try \`dna plan "${intentText}"\``);
-        }
-        candidates = matches.map((m) => ({
-          symbol: m.symbol.qualified_name ?? m.symbol.name,
-          score: m.score,
-          via: m.via,
-        }));
-        const top = matches[0]!;
-        symbol = top.symbol.qualified_name ?? top.symbol.name;
-        const LOW_CONFIDENCE_THRESHOLD = 70;
-        lowConfidence = candidates.length === 1 && top.score < LOW_CONFIDENCE_THRESHOLD;
-        if (!opts.json) {
-          console.error(
-            kleur.dim(`inferred symbol "${symbol}" (confidence ${top.score}, via ${top.via}) from intent`),
-          );
-          if (lowConfidence) {
-            console.error(
-              kleur.yellow(
-                `warning: only one candidate matched and confidence is low (${top.score}/100). ` +
-                `Consider passing the symbol explicitly with \`--symbol\` or as a positional arg.`,
-              ),
-            );
-          }
-          if (candidates.length > 1) {
-            const others = candidates.slice(1, 4)
-              .map((c) => `${c.symbol} (${c.score})`).join(", ");
-            console.error(kleur.dim(`other candidates: ${others}`));
-          }
-        }
+      if (!symbol && intentText && intentMatchesAttempted && candidates.length === 0) {
+        throw new Error(`no symbol matches for intent; try \`dna plan "${intentText}"\``);
       }
       if (!symbol) {
         throw new Error("symbol is required (or pass --intent <text> / --feature <label>)");
+      }
+      if (pickedVia && pickedScore !== undefined && !opts.json) {
+        console.error(
+          kleur.dim(`inferred symbol "${symbol}" (confidence ${pickedScore}, via ${pickedVia}) from intent`),
+        );
+        if (lowConfidence) {
+          console.error(
+            kleur.yellow(
+              `warning: only one candidate matched and confidence is low (${pickedScore}/100). ` +
+              `Consider passing the symbol explicitly as a positional arg.`,
+            ),
+          );
+        }
+        if (candidates.length > 1) {
+          const others = candidates.slice(1, 4)
+            .map((c) => `${c.symbol} (${c.score})`).join(", ");
+          console.error(kleur.dim(`other candidates: ${others}`));
+        }
       }
 
       const r = await prepareEdit(
@@ -103,11 +119,15 @@ export function registerPrepare(program: Command): void {
       if (opts.json) console.log(JSON.stringify(withCandidates, null, 2));
       else {
         console.log(r.markdown);
+        if (pickedVia) {
+          console.log(`\n_picked symbol via_ \`${pickedVia}\`${pickedScore !== undefined ? ` (score ${pickedScore})` : ""}`);
+        }
         if (candidates.length > 1) {
           console.log("\n## Candidates");
           for (const c of candidates) console.log(`- ${c.symbol} (score=${c.score}, via=${c.via})`);
           console.log(kleur.dim("\nPass the symbol name directly to lock the choice."));
         }
+        console.log(kleur.dim("\n→ Run `dna brief` after editing to verify changed symbols, invariants, notes, and tests."));
       }
     } catch (e) {
       console.error(kleur.red(`error: ${(e as Error).message}`));
