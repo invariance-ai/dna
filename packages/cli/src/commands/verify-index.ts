@@ -8,6 +8,7 @@ import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 interface Opts extends RootOption {
   sample?: string;
+  seed?: string;
   json?: boolean;
   noCache?: boolean;
 }
@@ -41,6 +42,7 @@ export function registerVerifyIndex(program: Command): void {
       .command("verify-index")
       .description("Score DNA's symbol graph against TypeScript's type checker (precision/recall/coverage)")
       .option("--sample <n>", "Sampled edges & callsites (default 200)")
+      .option("--seed <n>", "Deterministic sampling seed (also honored via DNA_VERIFY_SEED)")
       .option("--no-cache", "Don't write the cached report")
       .option("--json", "Emit JSON instead of text"),
   ).action(async (opts: Opts) => {
@@ -50,9 +52,13 @@ export function registerVerifyIndex(program: Command): void {
       if (sample !== undefined && (!Number.isInteger(sample) || sample <= 0)) {
         throw new Error("--sample must be a positive integer");
       }
+      const seed = opts.seed !== undefined ? Number(opts.seed) : undefined;
+      if (seed !== undefined && !Number.isFinite(seed)) {
+        throw new Error("--seed must be a finite number");
+      }
       const index = await readIndex(root);
       const thresholds = await loadThresholds(root);
-      const report = await verifyIndex(index, { root, sample });
+      const report = await verifyIndex(index, { root, sample, seed });
 
       if (!opts.noCache) {
         const cacheDir = path.join(root, ".dna/cache");
