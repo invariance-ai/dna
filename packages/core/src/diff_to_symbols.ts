@@ -66,10 +66,6 @@ export function parseUnifiedDiff(diff: string): HunkRange[] {
   return hunks;
 }
 
-// TODO(FIX 5): hunk→symbol mapping currently only knows symbol *start*
-// lines (see symbolsInHunks heuristic below). Once the parser emits end
-// lines we can replace the ±1 fudge with a real range overlap test.
-
 export interface SymbolHit {
   qualified_name: string;
   file: string;
@@ -77,9 +73,14 @@ export interface SymbolHit {
 }
 
 /**
- * Return symbols whose declaration line falls inside any of the hunks.
- * Heuristic — we don't track symbol *end* lines yet, so we count a symbol
- * as touched if its starting line is within or just before a hunk window.
+ * Return symbols whose source range overlaps any of the hunks.
+ *
+ * Uses the symbol's `end_line` (emitted by tree-sitter; see parser_ts.ts)
+ * when present so a hunk edit at line 150 inside a 200-line function (start
+ * line 10) correctly maps back to the function. Falls back to treating the
+ * symbol as 1-line (`end_line ?? line`) for old indexes / regex-parsed
+ * symbols — that degrades to the pre-end-line behavior (decl ±1) instead of
+ * regressing further.
  */
 export async function symbolsInHunks(
   root: string,
@@ -102,9 +103,15 @@ export async function symbolsInHunks(
   for (const sym of index.symbols) {
     const ranges = byFile.get(sym.file);
     if (!ranges) continue;
+    // Fallback: no end_line ⇒ treat as a 1-line symbol. We expand by ±1
+    // there so an edit immediately above/below a decl still matches (parity
+    // with the old heuristic for indexes built before end_line tracking).
+    const hasEnd = typeof sym.end_line === "number";
+    const symStart = hasEnd ? sym.line : sym.line - 1;
+    const symEnd = hasEnd ? (sym.end_line as number) : sym.line + 1;
     for (const r of ranges) {
-      // Symbol is "touched" if its declaration line falls in or just above the hunk.
-      if (sym.line >= r.start_line - 1 && sym.line <= r.end_line + 1) {
+      // Standard interval overlap: [symStart, symEnd] ∩ [r.start, r.end] ≠ ∅.
+      if (symStart <= r.end_line && symEnd >= r.start_line) {
         out.push({
           qualified_name: sym.qualified_name ?? sym.name,
           file: sym.file,

@@ -242,6 +242,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "function",
       });
       nextEnclosing = name;
@@ -254,6 +255,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "class",
       });
       // Descend with this class on the stack so methods get container.
@@ -273,6 +275,7 @@ function walkJsTs(
         container,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "method",
       });
       nextEnclosing = qualified;
@@ -285,6 +288,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "type",
       });
     }
@@ -302,6 +306,10 @@ function walkJsTs(
           qualified_name: name,
           file: filePath,
           line: node.startPosition.row + 1,
+          // Use the function body's end, not the declarator's, so the symbol
+          // range covers the actual function (declarator ends at `;`/EOL but
+          // the function literal may span many lines below).
+          end_line: valueNode.endPosition.row + 1,
           kind: "function",
         });
         walkJsTs(valueNode, filePath, symbols, call_sites, seen, name, classStack);
@@ -361,6 +369,7 @@ function walkPython(
         container,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: container ? "method" : "function",
       });
       nextEnclosing = qualified;
@@ -373,6 +382,7 @@ function walkPython(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "class",
       });
       for (const c of node.children) {
