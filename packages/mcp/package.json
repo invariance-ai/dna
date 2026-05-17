@@ -4,6 +4,15 @@
   "description": "MCP server for dna — exposes get_context/impact_of/tests_for/invariants_for/prepare_edit to coding agents.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/invariance-ai/dna.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/invariance-ai/dna#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./dist/server.js",
   "publishConfig": {
     "access": "public"
@@ -14,7 +23,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc"
   },
   "dependencies": {
     "@invariance/dna-core": "workspace:*",

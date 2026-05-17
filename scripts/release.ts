@@ -72,6 +72,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Refuse if not on main — tags otherwise land on a feature/worktree branch
+  // and a follow-up `git push --tags` decorates the wrong commit.
+  const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: ROOT }).toString().trim();
+  if (branch !== "main" && !process.env.RELEASE_ALLOW_BRANCH) {
+    console.error(`Refusing to release from branch '${branch}'. Switch to main, or set RELEASE_ALLOW_BRANCH=1.`);
+    process.exit(1);
+  }
+
   for (const { path: p, data } of pkgs) {
     data.version = version;
     await writeFile(p, JSON.stringify(data, null, 2) + "\n");

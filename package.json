@@ -25,7 +25,8 @@
     "gen:schemas": "tsx scripts/gen-json-schemas.ts",
     "gen:check": "pnpm gen:docs && pnpm gen:schemas && git diff --exit-code docs/guide/commands.md packages/schemas/json",
     "release": "tsx scripts/release.ts",
-    "release:check": "tsx scripts/release.ts --check"
+    "release:check": "tsx scripts/release.ts --check",
+    "release:dry": "bash scripts/publish.sh --dry-run"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

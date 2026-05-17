@@ -65,7 +65,7 @@ What DNA *did* deliver was **answer quality**: +11% overall, with double-digit g
 
 1. Build DNA: `pnpm install && pnpm build` in this repo.
 2. Two fresh clones of target repo at the same SHA. One gets `dna init && dna install claude && dna index`.
-3. Wire DNA hooks to local dist (the installer's `npx -y @invariance/dna` only works once `@invariance/dna` is published).
+3. Run `dna install claude --use-local` so hooks/MCP point at the absolute path of the built CLI. (Pre `dna v0.3` this required manually rewiring `.claude/settings.json` and `.mcp.json`; the `--use-local` flag is what removed that step.)
 4. Run 10 prompts × 2 variants with `claude -p --output-format json`. Capture `usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens}`.
 5. Run Sonnet judge from a neutral cwd with no repo context. Score blinded A/B, swap order, average.
 

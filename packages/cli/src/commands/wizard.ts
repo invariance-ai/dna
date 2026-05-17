@@ -19,7 +19,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 import { runInitCore } from "./init.js";
-import { runInstallClaude, runInstallCodex } from "./install.js";
+import { runInstallClaude, runInstallCodex, resolveCmd } from "./install.js";
 
 interface Opts extends RootOption {
   yes?: boolean;
@@ -151,8 +151,9 @@ export function registerWizard(program: Command): void {
                 : "Install Claude Code hooks?",
               claudeDetected,
             ));
+      const spec = resolveCmd({});
       if (wantClaude) {
-        await runInstallClaude(root, { force: false, skipClaudeMd: false });
+        await runInstallClaude(root, { force: false, skipClaudeMd: false, spec });
         step("Claude Code", "hooks + skill + CLAUDE.md block written to .claude/");
       } else {
         skipped("Claude Code", "declined");
@@ -169,7 +170,7 @@ export function registerWizard(program: Command): void {
               codexDetected,
             ));
       if (wantCodex) {
-        await runInstallCodex(root, { force: false, skipAgentsMd: false });
+        await runInstallCodex(root, { force: false, skipAgentsMd: false, spec });
         step("Codex", "MCP server registered + AGENTS.md block written");
       } else {
         skipped("Codex", "declined");
