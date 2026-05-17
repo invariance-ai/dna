@@ -49,7 +49,7 @@ export function registerVerifyIndex(program: Command): void {
       .command("verify-index")
       .description("Score DNA's symbol graph against a type checker (precision/recall/coverage)")
       .option("--sample <n>", "Sampled edges & callsites (default 200)")
-      .option("--seed <n>", "Deterministic PRNG seed (also DNA_VERIFY_SEED)")
+      .option("--seed <n>", "Deterministic sampling seed (also honored via DNA_VERIFY_SEED)")
       .option("--lang <lang>", "Language: typescript | python | auto (default auto)")
       .option("--no-cache", "Don't write the cached report")
       .option("--json", "Emit JSON instead of text"),
@@ -62,7 +62,7 @@ export function registerVerifyIndex(program: Command): void {
       }
       const seed = opts.seed !== undefined ? Number(opts.seed) : undefined;
       if (seed !== undefined && !Number.isFinite(seed)) {
-        throw new Error("--seed must be a number");
+        throw new Error("--seed must be a finite number");
       }
       const lang = (opts.lang ?? "auto").toLowerCase();
       if (!["auto", "typescript", "ts", "python", "py"].includes(lang)) {

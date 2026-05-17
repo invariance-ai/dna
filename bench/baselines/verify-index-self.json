@@ -1,0 +1,106 @@
+{
+  "language": "typescript",
+  "sample_size": 200,
+  "total_edges": 1372,
+  "precision": 0.8673469387755102,
+  "precision_ci": {
+    "low": 0.8127288764029851,
+    "high": 0.9078418155850694
+  },
+  "precision_confirmed": 170,
+  "precision_contradicted": 26,
+  "precision_inconclusive": 4,
+  "recall": 0.75,
+  "recall_ci": {
+    "low": 0.6856577652038048,
+    "high": 0.8049192318370348
+  },
+  "recall_seen": 200,
+  "recall_hit": 150,
+  "coverage": 0.44825072886297374,
+  "worst": [
+    {
+      "from_file": "packages/core/src/symbol_infer.ts",
+      "from_line": 27,
+      "callee": "add",
+      "dna_resolved_to": "packages/core/src/query.ts:add",
+      "ts_resolved_to": "packages/core/src/symbol_infer.ts:add",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "packages/cli/src/commands/ask.ts",
+      "from_line": 27,
+      "callee": "resolveRoot",
+      "dna_resolved_to": "bench/perf/run.ts:resolveRoot",
+      "ts_resolved_to": "packages/cli/src/root.ts:resolveRoot",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "packages/cli/src/commands/prepare.ts",
+      "from_line": 30,
+      "callee": "resolveRoot",
+      "dna_resolved_to": "bench/perf/run.ts:resolveRoot",
+      "ts_resolved_to": "packages/cli/src/root.ts:resolveRoot",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "bench/perf/baseline-rg.ts",
+      "from_line": 70,
+      "callee": "finish",
+      "dna_resolved_to": "bench/perf/baseline-cmm.ts:finish",
+      "ts_resolved_to": "bench/perf/baseline-rg.ts:finish",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "packages/core/src/questions.ts",
+      "from_line": 71,
+      "callee": "fileFor",
+      "dna_resolved_to": "packages/core/src/assumptions.ts:fileFor",
+      "ts_resolved_to": "packages/core/src/questions.ts:fileFor",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "packages/cli/src/commands/bench.ts",
+      "from_line": 53,
+      "callee": "pct",
+      "dna_resolved_to": "bench/perf/compare-all.ts:pct",
+      "ts_resolved_to": "packages/cli/src/commands/bench.ts:pct",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "packages/core/src/runtime.ts",
+      "from_line": 50,
+      "callee": "severityRank",
+      "dna_resolved_to": "packages/core/src/gate.ts:severityRank",
+      "ts_resolved_to": "packages/core/src/runtime.ts:severityRank",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "bench/perf/run-index.ts",
+      "from_line": 20,
+      "callee": "buildIndex",
+      "dna_resolved_to": "packages/core/src/index_store.ts:buildIndex",
+      "issue": "ts_says_no_target"
+    },
+    {
+      "from_file": "packages/cli/src/commands/verify-index.ts",
+      "from_line": 92,
+      "callee": "pct",
+      "dna_resolved_to": "bench/perf/compare-all.ts:pct",
+      "ts_resolved_to": "packages/cli/src/commands/verify-index.ts:pct",
+      "issue": "wrong_target"
+    },
+    {
+      "from_file": "bench/perf/accuracy.ts",
+      "from_line": 214,
+      "callee": "open",
+      "dna_resolved_to": "packages/core/src/query.ts:open",
+      "issue": "ts_says_no_target"
+    }
+  ],
+  "thresholds": {
+    "precision": 0.95,
+    "recall": 0.9,
+    "coverage": 0.85
+  }
+}
