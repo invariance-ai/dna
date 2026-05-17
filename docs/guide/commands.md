@@ -178,7 +178,7 @@ bench tasks [options]
 
 ### `bench run`
 
-Run bench: each task twice (baseline + dna) × n attempts
+Run bench: each task twice (baseline + dna) × n attempts × agent(s)
 
 ```
 bench run [options]
@@ -188,8 +188,9 @@ bench run [options]
 
 - `--tasks <path>` — Tasks directory (default bench/repo-edit-bench/tasks)
 - `--out <path>` — Output directory (default bench/results/<timestamp>)
-- `--agent <cmd>` — Agent command (default: `claude -p`)
-- `--n <n>` — Attempts per (task, arm). Default 3 (minimum for meaningful variance)
+- `--agent <cmd>` — Single agent command (default: `claude -p`). Overrides --matrix.
+- `--matrix <list>` — Comma list of presets: opus,sonnet,haiku (each runs the full bench)
+- `--n <n>` — Attempts per (task, arm). Default 5
 - `--timeout <sec>` — Per-attempt timeout in seconds. Default 300
 - `--root <path>` — Repo root (default: cwd)
 
@@ -1450,7 +1451,7 @@ verify-contract [options]
 
 ## `verify-index`
 
-Score DNA's symbol graph against TypeScript's type checker (precision/recall/coverage)
+Score DNA's symbol graph against a type checker (precision/recall/coverage)
 
 ```
 verify-index [options]
@@ -1459,6 +1460,8 @@ verify-index [options]
 **Options:**
 
 - `--sample <n>` — Sampled edges & callsites (default 200)
+- `--seed <n>` — Deterministic sampling seed (also honored via DNA_VERIFY_SEED)
+- `--lang <lang>` — Language: typescript | python | auto (default auto)
 - `--no-cache` — Don't write the cached report
 - `--json` — Emit JSON instead of text
 - `--root <path>` — Repo root (default: cwd)
