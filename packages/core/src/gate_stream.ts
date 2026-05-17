@@ -1,7 +1,8 @@
 import { mkdir, readFile } from "node:fs/promises";
-import { createWriteStream, openSync, writeSync, closeSync, watch } from "node:fs";
+import { createWriteStream, openSync, writeSync, closeSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import path from "node:path";
+import chokidar from "chokidar";
 import { changedHunks, symbolsInHunks } from "./diff_to_symbols.js";
 import { gateIncremental, type GateResult } from "./gate.js";
 import { loadConfig, scanFiles } from "./scan.js";
@@ -117,10 +118,21 @@ export interface WatchOptions {
   onEntry?: (entry: GateStreamEntry) => void;
   /** Base ref to diff against (default HEAD). */
   base?: string;
+  /**
+   * Milliseconds chokidar waits for a file to stop changing before emitting
+   * an event. Tests can lower this to keep runs fast. Defaults to 300ms.
+   */
+  stabilityThresholdMs?: number;
+  /** Extra paths to ignore (regex or glob). */
+  ignored?: (RegExp | string)[];
 }
 
 export interface WatchHandle {
-  stop(): void;
+  /**
+   * Stop watching and flush in-flight work. Awaits any evaluate() currently
+   * running so callers can safely exit without truncating a JSONL entry.
+   */
+  stop(): Promise<void>;
 }
 
 /**
@@ -133,26 +145,11 @@ export async function watchGateStream(
 ): Promise<WatchHandle> {
   const debounceMs = opts.debounceMs ?? 500;
   const base = opts.base ?? "HEAD";
+  const stabilityThreshold = opts.stabilityThresholdMs ?? 300;
 
   const config = await loadConfig(root);
   const files = await scanFiles(root, config);
   const watched = new Set<string>(files);
-
-  // Linux's fs.watch does not implement { recursive: true }. We still
-  // register the watchers below (some kernels/libuv builds do support it
-  // for top-level only), but warn the user so they aren't surprised when
-  // edits in nested directories don't trigger a re-evaluation. Polling
-  // alternatives (chokidar) would be a follow-up; we deliberately don't
-  // add new deps in this PR.
-  if (process.platform === "linux") {
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[dna gate --watch] Recursive fs.watch is not supported on Linux. " +
-        "Changes inside nested directories may not trigger re-evaluation. " +
-        "Run `dna gate --watch` from each package root, or rely on the " +
-        "PostToolUse hook (`dna gate --changed`) for full coverage.",
-    );
-  }
 
   // Long-lived O_APPEND stream — see concurrency note at top of file.
   // Reusing one stream avoids the per-entry open/close cost while keeping
@@ -166,8 +163,9 @@ export async function watchGateStream(
 
   let timer: NodeJS.Timeout | undefined;
   let pending = new Set<string>();
-
-  const watchers: ReturnType<typeof watch>[] = [];
+  // Track in-flight evaluate() so stop() can await it — prevents truncated
+  // JSONL entries if SIGINT lands mid-write (PR #25 review concern).
+  let inflight: Promise<void> | undefined;
 
   async function evaluate(): Promise<void> {
     const hunks = await changedHunks(root, base);
@@ -195,49 +193,62 @@ export async function watchGateStream(
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       pending.clear();
-      evaluate().catch(() => {
-        /* swallow; watchers continue */
+      const run = evaluate().catch(() => {
+        /* swallow; watcher continues */
+      });
+      inflight = run.finally(() => {
+        if (inflight === run) inflight = undefined;
       });
     }, debounceMs);
   }
 
-  // One recursive watcher per top-level dir keeps fs.watch happy on darwin.
-  const dirsToWatch = new Set<string>();
-  for (const f of watched) {
-    const rel = path.relative(root, f);
-    const top = rel.split(path.sep)[0];
-    if (top) dirsToWatch.add(path.join(root, top));
-  }
-  for (const dir of dirsToWatch) {
-    try {
-      const w = watch(dir, { recursive: true }, (_event, filename) => {
-        if (!filename) return;
-        const abs = path.join(dir, filename);
-        if (!watched.has(abs)) return;
-        pending.add(abs);
-        schedule();
-      });
-      watchers.push(w);
-    } catch {
-      // skip unwatchable dirs
-    }
-  }
+  // chokidar works recursively on all platforms (no more Linux warning).
+  // ignoreInitial=true: we only want events for *changes*, not the initial
+  // crawl. awaitWriteFinish coalesces editor save-bursts (vim/IDEs often
+  // write a temp + rename) into a single event.
+  const watcher = chokidar.watch(root, {
+    ignored: [
+      /(^|[\\/])node_modules[\\/]/,
+      /(^|[\\/])\.git[\\/]/,
+      /(^|[\\/])\.dna[\\/]/,
+      /(^|[\\/])dist[\\/]/,
+      ...(opts.ignored ?? []),
+    ],
+    ignoreInitial: true,
+    persistent: true,
+    awaitWriteFinish: { stabilityThreshold, pollInterval: 100 },
+  });
+
+  const onFsEvent = (filepath: string): void => {
+    const abs = path.isAbsolute(filepath) ? filepath : path.join(root, filepath);
+    if (!watched.has(abs)) return;
+    pending.add(abs);
+    schedule();
+  };
+  watcher.on("change", onFsEvent);
+  watcher.on("add", onFsEvent);
+  watcher.on("unlink", onFsEvent);
 
   return {
-    stop(): void {
+    async stop(): Promise<void> {
       if (timer) clearTimeout(timer);
-      for (const w of watchers) {
+      try {
+        await watcher.close();
+      } catch {
+        // ignore
+      }
+      // Wait for any in-flight evaluation so its JSONL write completes
+      // before we end the stream.
+      if (inflight) {
         try {
-          w.close();
+          await inflight;
         } catch {
           // ignore
         }
       }
-      try {
-        stream.end();
-      } catch {
-        // ignore
-      }
+      await new Promise<void>((resolve) => {
+        stream.end(() => resolve());
+      });
     },
   };
 }
