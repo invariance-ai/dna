@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile, stat } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseShellArgs, resetWorkingTree, parseMatrix, loadTasks, summarize, AGENT_PRESETS, type RunResult } from "./bench.js";
+import { DNA_MCP_CONFIG, parseShellArgs, resetWorkingTree, runTask, parseMatrix, loadTasks, summarize, AGENT_PRESETS, type BenchTask, type RunResult } from "./bench.js";
 
 const execFile = promisify(_execFile);
 const roots: string[] = [];
@@ -82,6 +82,95 @@ describe("resetWorkingTree", () => {
   it("throws loudly when path is not a git repo", { timeout: 15_000 }, async () => {
     const notRepo = await tempDir("dna-bench-notrepo-");
     await expect(resetWorkingTree(notRepo)).rejects.toThrow(/not a git repo/);
+  });
+
+  it("also scrubs .mcp.json so dna-arm config does not leak to baseline arm",
+    { timeout: 30_000 }, async () => {
+    const repo = await tempDir("dna-bench-mcp-leak-");
+    await gitInit(repo);
+    await writeFile(path.join(repo, "tracked.txt"), "ok\n");
+    await execFile("git", ["-C", repo, "add", "."]);
+    await execFile("git", ["-C", repo, "commit", "-q", "-m", "init"]);
+
+    // simulate the dna arm having written .mcp.json
+    await writeFile(path.join(repo, ".mcp.json"), JSON.stringify(DNA_MCP_CONFIG));
+
+    await resetWorkingTree(repo);
+
+    await expect(stat(path.join(repo, ".mcp.json"))).rejects.toThrow();
+  });
+});
+
+describe("prompt fairness (runTask)", () => {
+  // To assert "both arms get an identical prompt" without booting `claude`,
+  // we use a fake agentCommand that echoes its argv into a file in cwd. The
+  // test reads the recorded prompts back and asserts byte-equality.
+  async function setupRecordingRepo(): Promise<{ repo: string; task: BenchTask }> {
+    const repo = await tempDir("dna-bench-fair-");
+    await gitInit(repo);
+    await writeFile(path.join(repo, "README.md"), "fixture\n");
+    await execFile("git", ["-C", repo, "add", "."]);
+    await execFile("git", ["-C", repo, "commit", "-q", "-m", "init"]);
+
+    const task: BenchTask = {
+      id: "fair-test",
+      repo: ".",
+      // Multiline + special chars so any extra suffix on the dna arm would be
+      // immediately visible as a diff between recorded files.
+      prompt: "Edit src/foo.ts and add a comment.\n\nKeep it concise.",
+      checks: ["true"],
+    };
+    return { repo, task };
+  }
+
+  it("both arms receive byte-identical prompt argv", { timeout: 30_000 }, async () => {
+    const { repo, task } = await setupRecordingRepo();
+    // Write records OUTSIDE repo so the next attempt's resetWorkingTree
+    // (which scrubs untracked files) cannot delete them. JSON-encode the
+    // path to safely embed it inside the inline node -e source.
+    const outDir = await tempDir("dna-bench-fair-out-");
+    // Use single-quoted wrapper for the node -e script so the inner double-
+    // quoted path literal isn't terminated by parseShellArgs.
+    const recorder = (tag: string): string => {
+      const target = path.join(outDir, `agent-${tag}.txt`);
+      return `node -e 'require("fs").writeFileSync("${target}", process.argv[1] ?? "")'`;
+    };
+
+    const baseRes = await runTask(repo, task, "baseline", 0, { agentCommand: recorder("baseline"), timeoutSec: 30 });
+    const dnaRes  = await runTask(repo, task, "dna",      0, { agentCommand: recorder("dna"),      timeoutSec: 30 });
+    expect(baseRes.timed_out).toBe(false);
+    expect(dnaRes.timed_out).toBe(false);
+
+    const basePrompt = await readFile(path.join(outDir, "agent-baseline.txt"), "utf8");
+    const dnaPrompt  = await readFile(path.join(outDir, "agent-dna.txt"), "utf8");
+    expect(basePrompt).toBe(dnaPrompt);
+    expect(basePrompt).toBe(task.prompt);
+    // and specifically NOT the old appended suffix
+    expect(dnaPrompt).not.toMatch(/MCP server/i);
+  });
+
+  it("dna arm writes .mcp.json into the workdir; baseline arm does not",
+    { timeout: 30_000 }, async () => {
+    const { repo, task } = await setupRecordingRepo();
+    const outDir = await tempDir("dna-bench-mcp-out-");
+    // Snapshot the .mcp.json that exists in cwd at agent invocation time,
+    // OUTSIDE the repo so the next attempt's reset cannot wipe the snapshot.
+    const snap = (tag: string): string => {
+      const target = path.join(outDir, `snap-${tag}.json`);
+      return `node -e 'try{require("fs").copyFileSync(".mcp.json", "${target}")}catch(e){}'`;
+    };
+
+    await runTask(repo, task, "dna", 0, { agentCommand: snap("dna"), timeoutSec: 30 });
+    // baseline must NOT see a leftover .mcp.json from the prior dna attempt
+    await runTask(repo, task, "baseline", 0, { agentCommand: snap("baseline"), timeoutSec: 30 });
+
+    const dnaSnap = await stat(path.join(outDir, "snap-dna.json")).then(() => true).catch(() => false);
+    const baseSnap = await stat(path.join(outDir, "snap-baseline.json")).then(() => true).catch(() => false);
+    expect(dnaSnap).toBe(true);
+    expect(baseSnap).toBe(false);
+
+    const parsed = JSON.parse(await readFile(path.join(outDir, "snap-dna.json"), "utf8"));
+    expect(parsed).toEqual(DNA_MCP_CONFIG);
   });
 });
 

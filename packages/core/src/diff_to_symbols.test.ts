@@ -1,5 +1,25 @@
-import { describe, it, expect } from "vitest";
-import { parseUnifiedDiff } from "./diff_to_symbols.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, it, expect } from "vitest";
+import { parseUnifiedDiff, symbolsInHunks, type HunkRange } from "./diff_to_symbols.js";
+import { writeIndex, clearIndexCache, type DnaIndex } from "./index_store.js";
+
+const roots: string[] = [];
+
+async function tempRepo(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dna-d2s-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  while (roots.length) {
+    const r = roots.pop();
+    if (r) await rm(r, { recursive: true, force: true });
+  }
+  clearIndexCache();
+});
 
 describe("parseUnifiedDiff", () => {
   it("parses single-file single-hunk diffs", () => {
@@ -75,5 +95,97 @@ describe("parseUnifiedDiff", () => {
     ].join("\n");
     const hunks = parseUnifiedDiff(diff);
     expect(hunks).toEqual([{ file: "src/b.ts", start_line: 5, end_line: 6 }]);
+  });
+});
+
+describe("symbolsInHunks: end_line range overlap", () => {
+  async function seedIndex(root: string, index: DnaIndex): Promise<void> {
+    await writeIndex(root, index);
+  }
+
+  function baseIndex(root: string, symbols: DnaIndex["symbols"]): DnaIndex {
+    return {
+      version: 1,
+      built_at: new Date().toISOString(),
+      root,
+      files: ["src/long.ts"],
+      symbols,
+      edges: [],
+    };
+  }
+
+  it("matches a long function when the hunk falls mid-body (start=10, end=210, hunk@150-155)", async () => {
+    const root = await tempRepo();
+    await seedIndex(
+      root,
+      baseIndex(root, [
+        {
+          id: "src/long.ts#bigFn:10",
+          name: "bigFn",
+          qualified_name: "bigFn",
+          file: "src/long.ts",
+          line: 10,
+          end_line: 210,
+          kind: "function",
+        },
+      ]),
+    );
+    const hunks: HunkRange[] = [
+      { file: "src/long.ts", start_line: 150, end_line: 155 },
+    ];
+    const hits = await symbolsInHunks(root, hunks);
+    expect(hits.map((h) => h.qualified_name)).toEqual(["bigFn"]);
+  });
+
+  it("does NOT match a symbol starting at line 50 when the hunk is at lines 1-5", async () => {
+    const root = await tempRepo();
+    await seedIndex(
+      root,
+      baseIndex(root, [
+        {
+          id: "src/long.ts#laterFn:50",
+          name: "laterFn",
+          qualified_name: "laterFn",
+          file: "src/long.ts",
+          line: 50,
+          end_line: 120,
+          kind: "function",
+        },
+      ]),
+    );
+    const hunks: HunkRange[] = [
+      { file: "src/long.ts", start_line: 1, end_line: 5 },
+    ];
+    const hits = await symbolsInHunks(root, hunks);
+    expect(hits).toEqual([]);
+  });
+
+  it("falls back to decl ±1 when end_line is absent (no regression on old indexes)", async () => {
+    const root = await tempRepo();
+    await seedIndex(
+      root,
+      baseIndex(root, [
+        {
+          id: "src/long.ts#legacy:50",
+          name: "legacy",
+          qualified_name: "legacy",
+          file: "src/long.ts",
+          line: 50,
+          // end_line intentionally omitted — simulates a pre-v0.6a index.
+          kind: "function",
+        },
+      ]),
+    );
+    // Hunk just above decl: should still match (±1 fallback window).
+    const above: HunkRange[] = [
+      { file: "src/long.ts", start_line: 49, end_line: 49 },
+    ];
+    expect((await symbolsInHunks(root, above)).map((h) => h.qualified_name)).toEqual(["legacy"]);
+
+    // Hunk far below decl: must NOT match (no end_line ⇒ no body coverage).
+    const below: HunkRange[] = [
+      { file: "src/long.ts", start_line: 120, end_line: 125 },
+    ];
+    expect(await symbolsInHunks(root, below)).toEqual([]);
   });
 });
