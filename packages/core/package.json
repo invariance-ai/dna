@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@invariance/dna-schemas": "workspace:*",
+    "chokidar": "^4.0.0",
     "fast-glob": "^3.3.2",
     "typescript": "^5.6.0",
     "web-tree-sitter": "^0.26.8",
