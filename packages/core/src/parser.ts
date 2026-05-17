@@ -10,6 +10,13 @@ import type { SymbolRef } from "@invariance/dna-schemas";
  * Trade-off (honest): ~90% precision on typical code, lower on heavy macros,
  * decorators-as-factories, and dynamic dispatch. Good enough for v0.1 because
  * downstream consumers (CLI/MCP) can fall back to grep verification.
+ *
+ * Note on end_line: the regex parser only locates declaration lines — it
+ * does not parse bodies, so `end_line` is left undefined. Downstream
+ * (diff_to_symbols) treats absent end_line as a 1-line symbol, which is the
+ * pre-v0.6a behavior: long functions touched mid-body via the regex parser
+ * may still be missed by the hunk→symbol mapper. Tree-sitter (default) does
+ * track end_line.
  */
 export type ParsedLanguage =
   | "typescript"

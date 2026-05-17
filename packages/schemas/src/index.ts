@@ -22,6 +22,12 @@ export const SymbolRef = z.object({
   container: z.string().optional(),
   file: z.string(),
   line: z.number().int().nonnegative(),
+  /**
+   * Last source line covered by the symbol body (1-indexed, inclusive).
+   * Optional for back-compat with v0.1/v0.2 indexes; absent ⇒ caller should
+   * treat as a 1-line symbol (degrades to start-line-only behavior).
+   */
+  end_line: z.number().int().nonnegative().optional(),
   kind: SymbolKind,
 });
 export type SymbolRef = z.infer<typeof SymbolRef>;
