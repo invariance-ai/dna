@@ -2,6 +2,9 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import ts from "typescript";
 import type { DnaIndex } from "./index_store.js";
+import { wilson, type WilsonCI } from "./stats.js";
+
+export type { WilsonCI };
 
 function realRel(root: string, abs: string): string {
   try {
@@ -42,11 +45,6 @@ function normalizeTarget(p: string): string {
  * Python is intentionally out of scope here — pyright shell-out lives in
  * a separate verify_index_py module when we add it.
  */
-export interface WilsonCI {
-  low: number;
-  high: number;
-}
-
 export interface VerifyReport {
   language: "typescript";
   sample_size: number;
@@ -100,20 +98,6 @@ function resolveSeed(opt?: number): number | undefined {
     if (Number.isFinite(n)) return Math.trunc(n);
   }
   return undefined;
-}
-
-/** Wilson score interval at 95% confidence. */
-function wilson(hits: number, n: number): WilsonCI {
-  if (n === 0) return { low: 0, high: 1 };
-  const z = 1.96;
-  const p = hits / n;
-  const denom = 1 + (z * z) / n;
-  const centre = p + (z * z) / (2 * n);
-  const margin = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-  return {
-    low: Math.max(0, (centre - margin) / denom),
-    high: Math.min(1, (centre + margin) / denom),
-  };
 }
 
 export async function verifyIndex(

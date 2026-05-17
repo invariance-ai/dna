@@ -91,3 +91,24 @@ dna bench run --n 3 --timeout 300 --out bench/results/<stamp>
 ```
 
 All raw outputs under `bench/perf/results/compare-{self,flask,django}-2026-05-16.md` and `bench/results/2026-05-16-baseline-vs-dna/`.
+
+## Addendum: prompt fairness re-run (2026-05-16)
+
+Closes the prompt-artifact hole flagged in section 3. Change (commit on `fix/v0.2-bench-prompt-fairness`): the dna arm no longer appends `"Use the dna MCP server (get_context, impact_of, tests_for, invariants_for) before editing."` to the prompt. Both arms now receive the byte-identical task prompt; the only between-arm difference is whether `.mcp.json` (pointing at `dna serve`) is present in the workdir for `claude -p` to discover via the standard MCP mechanism. `resetWorkingTree` was extended to scrub `.mcp.json` between attempts so the dna config cannot leak to the baseline arm.
+
+Re-run: n=3, timeout=300s, same fixture (`examples/multi-symbol`), same agent (`claude -p`, opus 4.7), same tasks.
+
+| arm | pass rate | mean duration (s) | mean output (chars) | timed out |
+|---|---:|---:|---:|---:|
+| baseline | 100.0% | 30.5 | 313 | 0 |
+| dna      | 100.0% | 35.3 | 273 | 0 |
+
+| task | baseline | dna | delta (old → new) |
+|---|---:|---:|---:|
+| 001-refund-cap | 100% | 100% | 0pp → 0pp |
+| 002-add-test-coverage | **100%** | 100% | **+100pp → 0pp** |
+| 003-rename-symbol | 100% | 100% | 0pp → 0pp |
+
+**Honest read.** The +33pp aggregate and +100pp on task 002 from the original run were a *prompting* artifact, not a DNA-tools win. Once both arms get the same prompt and DNA is offered only as a discoverable MCP server, claude -p solves all three toy tasks unaided on this fixture. The harness still works end-to-end; this run just doesn't surface a DNA-vs-baseline signal at n=3 on toy tasks. To find a real signal you'd need (a) harder tasks where DNA's context actually matters (multi-file refactors with hidden callers, invariants under test) or (b) a weaker agent than opus 4.7 that benefits more from injected context. Don't ship the +33pp number — it was prompt-bias.
+
+Raw per-attempt JSON: `bench/results/2026-05-16-prompt-fairness/`.

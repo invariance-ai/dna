@@ -3,12 +3,19 @@ import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import kleur from "kleur";
 import { parse as parseYaml } from "yaml";
-import { readIndex, verifyIndex, type VerifyReport } from "@invariance/dna-core";
+import {
+  readIndex,
+  verifyIndex,
+  verifyIndexPython,
+  type VerifyReport,
+  type PyVerifyReport,
+} from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 interface Opts extends RootOption {
   sample?: string;
   seed?: string;
+  lang?: string;
   json?: boolean;
   noCache?: boolean;
 }
@@ -40,9 +47,10 @@ export function registerVerifyIndex(program: Command): void {
   addRootOption(
     program
       .command("verify-index")
-      .description("Score DNA's symbol graph against TypeScript's type checker (precision/recall/coverage)")
+      .description("Score DNA's symbol graph against a type checker (precision/recall/coverage)")
       .option("--sample <n>", "Sampled edges & callsites (default 200)")
       .option("--seed <n>", "Deterministic sampling seed (also honored via DNA_VERIFY_SEED)")
+      .option("--lang <lang>", "Language: typescript | python | auto (default auto)")
       .option("--no-cache", "Don't write the cached report")
       .option("--json", "Emit JSON instead of text"),
   ).action(async (opts: Opts) => {
@@ -56,9 +64,31 @@ export function registerVerifyIndex(program: Command): void {
       if (seed !== undefined && !Number.isFinite(seed)) {
         throw new Error("--seed must be a finite number");
       }
+      const lang = (opts.lang ?? "auto").toLowerCase();
+      if (!["auto", "typescript", "ts", "python", "py"].includes(lang)) {
+        throw new Error("--lang must be one of: auto, typescript, python");
+      }
       const index = await readIndex(root);
       const thresholds = await loadThresholds(root);
-      const report = await verifyIndex(index, { root, sample, seed });
+
+      // Auto: pick python if there are more .py files than TS files in the index.
+      const pyFileCount = index.files.filter((f) => f.endsWith(".py")).length;
+      const tsFileCount = index.files.filter(
+        (f) => f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx"),
+      ).length;
+      const useLang =
+        lang === "python" || lang === "py"
+          ? "python"
+          : lang === "typescript" || lang === "ts"
+          ? "typescript"
+          : pyFileCount > tsFileCount
+          ? "python"
+          : "typescript";
+
+      const report: VerifyReport | PyVerifyReport =
+        useLang === "python"
+          ? await verifyIndexPython(index, { root, sample, seed })
+          : await verifyIndex(index, { root, sample, seed });
 
       if (!opts.noCache) {
         const cacheDir = path.join(root, ".dna/cache");
@@ -87,11 +117,15 @@ export function registerVerifyIndex(program: Command): void {
   });
 }
 
-function renderReport(r: VerifyReport, t: Thresholds): void {
+function renderReport(r: VerifyReport | PyVerifyReport, t: Thresholds): void {
   const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
   const ci = (lo: number, hi: number): string => `[${pct(lo)}–${pct(hi)}]`;
   const badge = (ok: boolean): string => (ok ? kleur.green("✓") : kleur.red("✗"));
-  console.log(kleur.bold("graph quality") + kleur.dim(`  (sample=${r.sample_size}/${r.total_edges} edges)`));
+  if ("skipped_reason" in r && r.skipped_reason) {
+    console.log(kleur.yellow(`verify-index skipped (${r.language}): ${r.skipped_reason}`));
+    return;
+  }
+  console.log(kleur.bold(`graph quality [${r.language}]`) + kleur.dim(`  (sample=${r.sample_size}/${r.total_edges} edges)`));
   console.log(
     `  ${badge(r.precision >= t.precision)} precision  ${pct(r.precision)}  ${kleur.dim(`95% CI ${ci(r.precision_ci.low, r.precision_ci.high)}  (≥${pct(t.precision)})`)}`,
   );
@@ -110,7 +144,9 @@ function renderReport(r: VerifyReport, t: Thresholds): void {
     for (const w of r.worst) {
       console.log(`  ${kleur.dim(w.from_file + ":" + w.from_line)}  ${w.callee}  ${kleur.yellow(w.issue)}`);
       if (w.dna_resolved_to) console.log(`    dna → ${kleur.dim(w.dna_resolved_to)}`);
-      if (w.ts_resolved_to) console.log(`    ts  → ${kleur.dim(w.ts_resolved_to)}`);
+      const tw = w as { ts_resolved_to?: string; pyright_resolved_to?: string };
+      if (tw.ts_resolved_to) console.log(`    ts  → ${kleur.dim(tw.ts_resolved_to)}`);
+      if (tw.pyright_resolved_to) console.log(`    py  → ${kleur.dim(tw.pyright_resolved_to)}`);
     }
   }
 }

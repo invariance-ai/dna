@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import kleur from "kleur";
-import { loadTasks, runBench } from "@invariance/dna-core";
+import { loadTasks, runBench, parseMatrix, type BenchAgent } from "@invariance/dna-core";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 
 export function registerBench(program: Command): void {
@@ -30,27 +30,59 @@ export function registerBench(program: Command): void {
   addRootOption(
     bench
       .command("run")
-      .description("Run bench: each task twice (baseline + dna) × n attempts")
+      .description("Run bench: each task twice (baseline + dna) × n attempts × agent(s)")
       .option("--tasks <path>", "Tasks directory (default bench/repo-edit-bench/tasks)")
       .option("--out <path>", "Output directory (default bench/results/<timestamp>)")
-      .option("--agent <cmd>", "Agent command (default: `claude -p`)")
-      .option("--n <n>", "Attempts per (task, arm). Default 3 (minimum for meaningful variance)")
+      .option("--agent <cmd>", "Single agent command (default: `claude -p`). Overrides --matrix.")
+      .option("--matrix <list>", "Comma list of presets: opus,sonnet,haiku (each runs the full bench)")
+      .option("--n <n>", "Attempts per (task, arm). Default 5")
       .option("--timeout <sec>", "Per-attempt timeout in seconds. Default 300"),
-  ).action(async (opts: RootOption & { tasks?: string; out?: string; agent?: string; n?: string; timeout?: string }) => {
+  ).action(async (opts: RootOption & { tasks?: string; out?: string; agent?: string; matrix?: string; n?: string; timeout?: string }) => {
     const root = resolveRoot(opts);
     const tasksDir = opts.tasks ? path.resolve(root, opts.tasks) : path.join(root, "bench/repo-edit-bench/tasks");
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const outDir = opts.out ? path.resolve(root, opts.out) : path.join(root, "bench/results", stamp);
-    const n = opts.n ? Number(opts.n) : 3;
+    const n = opts.n ? Number(opts.n) : 5;
     const timeoutSec = opts.timeout ? Number(opts.timeout) : 300;
-    console.log(kleur.bold("bench run") + kleur.dim(`  tasks=${path.relative(root, tasksDir)} out=${path.relative(root, outDir)} n=${n}`));
+
+    // --agent always wins (raw command). Otherwise --matrix expands to presets.
+    let agents: BenchAgent[] | undefined;
+    let agentCommand: string | undefined;
+    if (opts.agent) {
+      agentCommand = opts.agent;
+      if (opts.matrix) {
+        console.log(kleur.yellow("warning: --agent overrides --matrix; running single agent only"));
+      }
+    } else if (opts.matrix) {
+      agents = parseMatrix(opts.matrix);
+    }
+
+    const agentDesc = agents
+      ? `matrix=[${agents.map((a) => a.label).join(",")}]`
+      : `agent=${agentCommand ?? "claude -p"}`;
+    console.log(kleur.bold("bench run") + kleur.dim(`  tasks=${path.relative(root, tasksDir)} out=${path.relative(root, outDir)} n=${n} ${agentDesc}`));
+
+    if (n < 3) {
+      console.log(kleur.yellow(`warning: n=${n} is below the n=3 minimum; results will be high-variance`));
+    }
+
     const summary = await runBench(root, tasksDir, outDir, {
-      agentCommand: opts.agent,
+      agentCommand,
+      agents,
       n,
       timeoutSec,
     });
     const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
-    console.log(`\nbaseline pass ${pct(summary.baseline.pass_rate)}  •  dna pass ${pct(summary.dna.pass_rate)}  •  Δ ${pct(summary.dna.pass_rate - summary.baseline.pass_rate)}`);
+    console.log(`\naggregate: baseline ${pct(summary.baseline.pass_rate)}  •  dna ${pct(summary.dna.pass_rate)}  •  Δ ${pct(summary.dna.pass_rate - summary.baseline.pass_rate)}`);
+    if (summary.agents.length > 1) {
+      for (const a of summary.agents) {
+        const b = summary.cells.find((c) => c.agent_label === a && c.arm === "baseline");
+        const d = summary.cells.find((c) => c.agent_label === a && c.arm === "dna");
+        if (b && d) {
+          console.log(`  ${kleur.cyan(a.padEnd(8))} baseline ${pct(b.pass_rate)}  dna ${pct(d.pass_rate)}  Δ ${pct(d.pass_rate - b.pass_rate)}`);
+        }
+      }
+    }
     if (summary.baseline.timed_out > 0 || summary.dna.timed_out > 0) {
       console.log(kleur.yellow(`timed out: baseline=${summary.baseline.timed_out} dna=${summary.dna.timed_out}`));
     }

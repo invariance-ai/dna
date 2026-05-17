@@ -1,4 +1,12 @@
-import { loadConfig, scanFiles, parseFile, buildIndex, writeIndex } from "@invariance/dna-core";
+import {
+  loadConfig,
+  scanFiles,
+  parseFile,
+  buildIndex,
+  writeIndex,
+  loadParseCache,
+  saveParseCache,
+} from "@invariance/dna-core";
 import { timeIt } from "./measure.js";
 
 export interface IndexResult {
@@ -16,9 +24,11 @@ export interface IndexResult {
 export async function indexCorpus(root: string): Promise<IndexResult> {
   const config = await loadConfig(root);
   const { ms: scan_ms, result: files } = await timeIt(() => scanFiles(root, config));
+  await loadParseCache(root);
   const { ms: parse_ms, result: parsed } = await timeIt(() => Promise.all(files.map((f) => parseFile(f))));
   const { ms: build_ms, result: index } = await timeIt(async () => buildIndex(root, parsed));
   const { ms: write_ms } = await timeIt(() => writeIndex(root, index));
+  await saveParseCache(root);
   return {
     root,
     files: files.length,

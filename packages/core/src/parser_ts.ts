@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Parser, Language, type Node } from "web-tree-sitter";
@@ -49,6 +50,129 @@ const languageCache = new Map<string, Promise<Language>>();
 // within a single call). Parser.parse is synchronous after setLanguage.
 const parserPool = new Map<string, Parser>();
 
+// ---------- Content-keyed parse cache ----------
+//
+// The parser is a pure function of (language, content). Hashing content and
+// memoizing the resulting SymbolRef[] (and the rest of ParsedFile minus the
+// tree, which we already delete()) lets repeat parses of identical files —
+// either within one process or across `dna index` runs — skip tree-sitter
+// entirely. The tree itself is a native handle and isn't cached.
+
+interface CachedParse {
+  symbols: SymbolRef[];
+  call_sites: ParsedFile["call_sites"];
+  imports: ImportBinding[];
+  re_exports: NonNullable<ParsedFile["re_exports"]>;
+  language: ParsedLanguage;
+}
+
+const IN_MEM_MAX = 500;
+const PERSIST_MAX = 5000;
+
+// In-memory LRU (Map preserves insertion order — re-insert on access).
+const parseCache = new Map<string, CachedParse>();
+// Persistent layer (loaded from disk on demand, written on flush).
+const persistCache = new Map<string, CachedParse>();
+let persistLoaded = false;
+let persistDirty = false;
+let persistRoot: string | null = null;
+
+// Counters exposed for tests / diagnostics.
+export const parseStats = { hits: 0, misses: 0 };
+
+function sha256(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+function cacheKey(lang: ParsedLanguage, content: string): string {
+  return `${lang}:${sha256(content)}`;
+}
+
+function lruGet(key: string): CachedParse | undefined {
+  const hit = parseCache.get(key);
+  if (hit) {
+    parseCache.delete(key);
+    parseCache.set(key, hit);
+    return hit;
+  }
+  const persisted = persistCache.get(key);
+  if (persisted) {
+    // promote to in-mem
+    lruSet(key, persisted);
+    return persisted;
+  }
+  return undefined;
+}
+
+function lruSet(key: string, value: CachedParse): void {
+  if (parseCache.has(key)) parseCache.delete(key);
+  parseCache.set(key, value);
+  if (parseCache.size > IN_MEM_MAX) {
+    const oldest = parseCache.keys().next().value;
+    if (oldest !== undefined) parseCache.delete(oldest);
+  }
+  persistCache.set(key, value);
+  if (persistCache.size > PERSIST_MAX) {
+    const oldest = persistCache.keys().next().value;
+    if (oldest !== undefined) persistCache.delete(oldest);
+  }
+  persistDirty = true;
+}
+
+function cacheFile(root: string): string {
+  return path.join(root, ".dna", "cache", "parse-cache.json");
+}
+
+/**
+ * Load the persistent parse cache for `root` from disk. Safe to call multiple
+ * times; only the first call touches disk. Silently no-ops on read errors
+ * (cache is a perf hint, never load-bearing).
+ */
+export async function loadParseCache(root: string): Promise<void> {
+  if (persistLoaded && persistRoot === root) return;
+  persistLoaded = true;
+  persistRoot = root;
+  try {
+    const raw = await readFile(cacheFile(root), "utf8");
+    const data = JSON.parse(raw) as { entries: Array<[string, CachedParse]> };
+    for (const [k, v] of data.entries) persistCache.set(k, v);
+  } catch {
+    // missing or corrupt — start empty
+  }
+}
+
+/**
+ * Flush the persistent parse cache to disk under `root/.dna/cache/`.
+ * No-op if no writes happened since load.
+ */
+export async function saveParseCache(root: string): Promise<void> {
+  if (!persistDirty) return;
+  const target = persistRoot ?? root;
+  try {
+    await mkdir(path.dirname(cacheFile(target)), { recursive: true });
+    const entries = Array.from(persistCache.entries());
+    await writeFile(
+      cacheFile(target),
+      JSON.stringify({ version: 1, entries }),
+      "utf8",
+    );
+    persistDirty = false;
+  } catch {
+    // cache write failures are non-fatal
+  }
+}
+
+/** Test-only: drop all cached parses and reset stats. */
+export function _resetParseCache(): void {
+  parseCache.clear();
+  persistCache.clear();
+  persistLoaded = false;
+  persistDirty = false;
+  persistRoot = null;
+  parseStats.hits = 0;
+  parseStats.misses = 0;
+}
+
 async function ensureParserInit(): Promise<void> {
   if (!parserInitPromise) parserInitPromise = Parser.init();
   return parserInitPromise;
@@ -83,10 +207,29 @@ export async function parseFileTS(filePath: string): Promise<ParsedFile> {
     : ext.startsWith(".j") ? "javascript"
     : "typescript";
 
+  const src = await readFile(filePath, "utf8");
+  const key = cacheKey(language, src);
+
+  const cached = lruGet(key);
+  if (cached) {
+    parseStats.hits++;
+    // Cached symbols/call_sites carry the file path of whichever file first
+    // populated the entry. Two identical files in different locations must
+    // each report their own path, so rewrite path-bearing fields.
+    return {
+      path: filePath,
+      language: cached.language,
+      symbols: cached.symbols.map((s) => ({ ...s, file: filePath })),
+      call_sites: cached.call_sites.slice(),
+      imports: cached.imports.slice(),
+      re_exports: cached.re_exports.slice(),
+    };
+  }
+  parseStats.misses++;
+
   await ensureParserInit();
   const parser = await getParser(grammar);
 
-  const src = await readFile(filePath, "utf8");
   const tree = parser.parse(src);
   if (!tree) {
     throw new Error(`tree-sitter: parse returned null for ${filePath}`);
@@ -107,6 +250,17 @@ export async function parseFileTS(filePath: string): Promise<ParsedFile> {
   }
 
   tree.delete();
+
+  // Store a path-agnostic copy: strip the per-file path so two identical files
+  // share the entry. parseFileTS rewrites `file` on the way out.
+  lruSet(key, {
+    language,
+    symbols: symbols.map((s) => ({ ...s, file: "" })),
+    call_sites: call_sites.slice(),
+    imports: imports.slice(),
+    re_exports: re_exports.slice(),
+  });
+
   return { path: filePath, language, symbols, call_sites, imports, re_exports };
 }
 
@@ -242,6 +396,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "function",
       });
       nextEnclosing = name;
@@ -254,6 +409,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "class",
       });
       // Descend with this class on the stack so methods get container.
@@ -273,6 +429,7 @@ function walkJsTs(
         container,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "method",
       });
       nextEnclosing = qualified;
@@ -285,6 +442,7 @@ function walkJsTs(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "type",
       });
     }
@@ -302,6 +460,10 @@ function walkJsTs(
           qualified_name: name,
           file: filePath,
           line: node.startPosition.row + 1,
+          // Use the function body's end, not the declarator's, so the symbol
+          // range covers the actual function (declarator ends at `;`/EOL but
+          // the function literal may span many lines below).
+          end_line: valueNode.endPosition.row + 1,
           kind: "function",
         });
         walkJsTs(valueNode, filePath, symbols, call_sites, seen, name, classStack);
@@ -361,6 +523,7 @@ function walkPython(
         container,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: container ? "method" : "function",
       });
       nextEnclosing = qualified;
@@ -373,6 +536,7 @@ function walkPython(
         qualified_name: name,
         file: filePath,
         line: node.startPosition.row + 1,
+        end_line: node.endPosition.row + 1,
         kind: "class",
       });
       for (const c of node.children) {
