@@ -19,6 +19,8 @@ What just happened:
 
 If you prefer a global install: `npm install -g @invariance/dna`, then add `--use-global` to the install commands so hooks call `dna` directly instead of `npx`.
 
+If you're running dna from a local checkout (pre-publish, dogfood, or contributor dev), use `--use-local` so hooks point at the absolute path of your built CLI (`node /abs/path/to/packages/cli/dist/index.js`). The installer auto-detects this and switches to local mode when it sees it's running from a workspace checkout — set `CI=1` to force npx instead.
+
 ## 2. Look around (2 min)
 
 ```bash

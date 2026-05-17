@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED: prefer `scripts/release.ts` (canonical entrypoint with version-bump,
+# branch + dirty-tree guards, and lockstep commit/tag). This script is kept for
+# muscle-memory dry-runs only: `pnpm release:dry` wraps `scripts/publish.sh --dry-run`.
+#
 # Publish dna packages to npm in dependency order.
 #
 # Usage:

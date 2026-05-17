@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import kleur from "kleur";
 import { addRootOption, resolveRoot, type RootOption } from "../root.js";
 import { AGENT_INSTRUCTIONS, CLAUDE_SKILL, CURSOR_RULE } from "../install/skill-content.js";
@@ -9,6 +10,7 @@ interface InstallOpts extends RootOption {
   force?: boolean;
   skipClaudeMd?: boolean;
   useGlobal?: boolean;
+  useLocal?: boolean;
   dryRun?: boolean;
 }
 
@@ -16,6 +18,7 @@ interface CodexInstallOpts extends RootOption {
   force?: boolean;
   skipAgentsMd?: boolean;
   useGlobal?: boolean;
+  useLocal?: boolean;
   dryRun?: boolean;
 }
 
@@ -23,6 +26,7 @@ interface CursorInstallOpts extends RootOption {
   force?: boolean;
   skipMcp?: boolean;
   useGlobal?: boolean;
+  useLocal?: boolean;
   dryRun?: boolean;
 }
 
@@ -33,9 +37,69 @@ interface CursorInstallOpts extends RootOption {
  */
 let DRY_RUN = false;
 
-/** Command prefix for hooks. npx-by-default keeps the global install optional. */
-function dnaCmd(useGlobal: boolean): string {
-  return useGlobal ? "dna" : "npx -y @invariance/dna";
+export type CmdMode = "npx" | "global" | "local";
+
+export interface CmdSpec {
+  /** Single-string form for embedding in shell hook commands. */
+  shell: string;
+  /** Argv form for MCP `command`+`args` JSON entries (excludes the subcommand). */
+  command: string;
+  baseArgs: string[];
+  mode: CmdMode;
+}
+
+/**
+ * Resolve the absolute path of the running CLI's built entrypoint.
+ * Returns null if we're not running from a built dist (e.g. `tsx` in dev).
+ */
+function localBinPath(): string | null {
+  try {
+    const here = fileURLToPath(import.meta.url);
+    // install.ts -> dist/commands/install.js -> entry is dist/index.js
+    if (!here.endsWith(".js")) return null;
+    const entry = path.resolve(path.dirname(here), "..", "index.js");
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the install-time command mode from user flags + workspace auto-detection. */
+export function resolveCmd(opts: { useGlobal?: boolean; useLocal?: boolean }): CmdSpec {
+  if (opts.useGlobal && opts.useLocal) {
+    throw new Error("--use-global and --use-local are mutually exclusive");
+  }
+  if (opts.useLocal) {
+    const bin = localBinPath();
+    if (!bin) {
+      throw new Error(
+        "--use-local requires a built CLI. Run `pnpm -r build` first, " +
+          "or install the published package and drop --use-local.",
+      );
+    }
+    return { shell: `node ${JSON.stringify(bin)}`, command: "node", baseArgs: [bin], mode: "local" };
+  }
+  if (opts.useGlobal) {
+    return { shell: "dna", command: "dna", baseArgs: [], mode: "global" };
+  }
+  // Auto-detect: when running from a workspace checkout (CLI not inside node_modules)
+  // and the user didn't pin a mode, prefer local — hooks built for npx silently no-op
+  // until `@invariance/dna` is on npm. CI keeps the npx default for predictability.
+  const bin = localBinPath();
+  if (bin && !process.env.CI && !bin.includes(`${path.sep}node_modules${path.sep}`)) {
+    process.stderr.write(
+      kleur.yellow(
+        "note: auto-detected workspace install → using local mode (override with --use-global or set CI=1 for npx)\n",
+      ),
+    );
+    return { shell: `node ${JSON.stringify(bin)}`, command: "node", baseArgs: [bin], mode: "local" };
+  }
+  return {
+    shell: "npx -y @invariance/dna",
+    command: "npx",
+    baseArgs: ["-y", "@invariance/dna"],
+    mode: "npx",
+  };
 }
 
 export function registerInstall(program: Command): void {
@@ -48,19 +112,21 @@ export function registerInstall(program: Command): void {
       .option("--force", "Overwrite existing dna-managed Claude files")
       .option("--skip-claude-md", "Do not append dna instructions to CLAUDE.md")
       .option("--use-global", "Generate hooks that call `dna` directly (requires global install)")
+      .option("--use-local", "Generate hooks that call this CLI by absolute path (for dogfood/dev)")
       .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: InstallOpts) => {
     const root = resolveRoot(opts);
     DRY_RUN = !!opts.dryRun;
     try {
+      const spec = resolveCmd(opts);
       await runInstallClaude(root, {
         force: !!opts.force,
         skipClaudeMd: !!opts.skipClaudeMd,
-        useGlobal: !!opts.useGlobal,
+        spec,
       });
       console.log("");
       console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Claude Code CLI-first dna integration");
-      console.log(kleur.dim(`Hooks call: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(kleur.dim(`Hooks call: ${spec.shell}`));
       console.log(
         kleur.dim("Hooks fire on session start, prompts, edits, failures, brief on stop, and turn end."),
       );
@@ -76,19 +142,21 @@ export function registerInstall(program: Command): void {
       .option("--force", "Overwrite existing dna-managed Codex files")
       .option("--skip-agents-md", "Do not append dna instructions to AGENTS.md")
       .option("--use-global", "Configure Codex to call `dna` directly (requires global install)")
+      .option("--use-local", "Configure Codex to call this CLI by absolute path (for dogfood/dev)")
       .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: CodexInstallOpts) => {
     const root = resolveRoot(opts);
     DRY_RUN = !!opts.dryRun;
     try {
+      const spec = resolveCmd(opts);
       await runInstallCodex(root, {
         force: !!opts.force,
         skipAgentsMd: !!opts.skipAgentsMd,
-        useGlobal: !!opts.useGlobal,
+        spec,
       });
       console.log("");
       console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Codex CLI dna integration");
-      console.log(kleur.dim(`Notify hook + MCP server use: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(kleur.dim(`Notify hook + MCP server use: ${spec.shell}`));
       console.log(kleur.dim("Codex CLI has no PreToolUse hook; AGENTS.md teaches it to run `dna prepare` and `dna brief` like `rg`."));
     } finally {
       DRY_RUN = false;
@@ -102,19 +170,21 @@ export function registerInstall(program: Command): void {
       .option("--force", "Overwrite existing dna-managed Cursor files")
       .option("--skip-mcp", "Do not write .cursor/mcp.json (rule file only)")
       .option("--use-global", "Configure MCP to call `dna` directly (requires global install)")
+      .option("--use-local", "Configure MCP to call this CLI by absolute path (for dogfood/dev)")
       .option("--dry-run", "Show what would be written without touching disk"),
   ).action(async (opts: CursorInstallOpts) => {
     const root = resolveRoot(opts);
     DRY_RUN = !!opts.dryRun;
     try {
+      const spec = resolveCmd(opts);
       await runInstallCursor(root, {
         force: !!opts.force,
         skipMcp: !!opts.skipMcp,
-        useGlobal: !!opts.useGlobal,
+        spec,
       });
       console.log("");
       console.log((DRY_RUN ? kleur.yellow("dry-run") : kleur.green("installed")) + " Cursor dna integration");
-      console.log(kleur.dim(`MCP server uses: ${dnaCmd(!!opts.useGlobal)}`));
+      console.log(kleur.dim(`MCP server uses: ${spec.shell}`));
       console.log(kleur.dim("Cursor has no shell hooks; .cursor/rules/dna.mdc teaches the agent to run `dna prepare` before edits and `dna brief` after."));
     } finally {
       DRY_RUN = false;
@@ -125,41 +195,39 @@ export function registerInstall(program: Command): void {
 export interface RunInstallClaudeOpts {
   force: boolean;
   skipClaudeMd: boolean;
-  useGlobal?: boolean;
+  spec: CmdSpec;
 }
 
 export async function runInstallClaude(root: string, opts: RunInstallClaudeOpts): Promise<void> {
-  const cmd = dnaCmd(!!opts.useGlobal);
   const writes: Array<[string, string]> = [
     [path.join(root, ".claude/skills/dna/SKILL.md"), CLAUDE_SKILL],
     [
       path.join(root, ".claude/settings.json"),
-      JSON.stringify(claudeSettings(cmd), null, 2) + "\n",
+      JSON.stringify(claudeSettings(opts.spec.shell), null, 2) + "\n",
     ],
   ];
   for (const [file, content] of writes) {
     await writeManagedFile(root, file, content, opts.force);
   }
-  await upsertClaudeMcp(root, !!opts.useGlobal);
+  await upsertClaudeMcp(root, opts.spec);
   if (!opts.skipClaudeMd) await upsertAgentMd(root, "CLAUDE.md");
 }
 
 export interface RunInstallCodexOpts {
   force: boolean;
   skipAgentsMd: boolean;
-  useGlobal?: boolean;
+  spec: CmdSpec;
 }
 
 export async function runInstallCodex(root: string, opts: RunInstallCodexOpts): Promise<void> {
-  const cmd = dnaCmd(!!opts.useGlobal);
   if (!opts.skipAgentsMd) await upsertAgentMd(root, "AGENTS.md");
-  await upsertCodexConfig(root, cmd, !!opts.useGlobal);
+  await upsertCodexConfig(root, opts.spec);
 }
 
 export interface RunInstallCursorOpts {
   force: boolean;
   skipMcp: boolean;
-  useGlobal?: boolean;
+  spec: CmdSpec;
 }
 
 export async function runInstallCursor(root: string, opts: RunInstallCursorOpts): Promise<void> {
@@ -169,7 +237,7 @@ export async function runInstallCursor(root: string, opts: RunInstallCursorOpts)
     CURSOR_RULE,
     opts.force,
   );
-  if (!opts.skipMcp) await upsertCursorMcp(root, !!opts.useGlobal);
+  if (!opts.skipMcp) await upsertCursorMcp(root, opts.spec);
 }
 
 async function writeManagedFile(
@@ -327,7 +395,7 @@ function claudeSettings(cmd: string): unknown {
  * managed block delimited by `# dna:start` / `# dna:end` and rewrite that span
  * on subsequent installs. Anything outside the markers is preserved verbatim.
  */
-async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean): Promise<void> {
+async function upsertCodexConfig(root: string, spec: CmdSpec): Promise<void> {
   const file = path.join(root, ".codex/config.toml");
   if (!DRY_RUN) await mkdir(path.dirname(file), { recursive: true });
   let existing = "";
@@ -337,24 +405,18 @@ async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean):
     // create below
   }
 
-  // Codex CLI MCP server registration. When useGlobal=true we point at the `dna`
-  // binary directly; otherwise use npx so no global install is required.
-  const mcpEntry = useGlobal
-    ? `[mcp_servers.dna]\ncommand = "dna"\nargs = ["serve"]\n`
-    : `[mcp_servers.dna]\ncommand = "npx"\nargs = ["-y", "@invariance/dna", "serve"]\n`;
-
-  const notifyArgs = useGlobal
-    ? `["dna", "attach", "--transcript", "-"]`
-    : `["npx", "-y", "@invariance/dna", "attach", "--transcript", "-"]`;
+  const tomlArr = (xs: string[]): string => "[" + xs.map((x) => JSON.stringify(x)).join(", ") + "]";
+  const mcpEntry =
+    `[mcp_servers.dna]\n` +
+    `command = ${JSON.stringify(spec.command)}\n` +
+    `args = ${tomlArr([...spec.baseArgs, "serve"])}\n`;
+  const notifyArgs = tomlArr([spec.command, ...spec.baseArgs, "attach", "--transcript", "-"]);
 
   const block =
     `# dna:start — managed by \`dna install codex\`. Edit outside markers freely.\n` +
     `notify = ${notifyArgs}\n\n` +
     `${mcpEntry}` +
     `# dna:end\n`;
-
-  // Discard noise about the unused cmd param — keep API stable but mark as intentional.
-  void cmd;
 
   const next = existing.includes("# dna:start")
     ? existing.replace(/# dna:start[\s\S]*?# dna:end\n?/m, block)
@@ -376,7 +438,7 @@ async function upsertCodexConfig(root: string, cmd: string, useGlobal: boolean):
  * This is what makes the SKILL.md `prepare_edit` advice actually callable —
  * without `.mcp.json`, the MCP tools are not exposed to the Claude agent.
  */
-async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> {
+async function upsertClaudeMcp(root: string, spec: CmdSpec): Promise<void> {
   const file = path.join(root, ".mcp.json");
   let existing: Record<string, unknown> = {};
   try {
@@ -387,9 +449,7 @@ async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> 
   }
   const servers =
     (existing.mcpServers as Record<string, unknown> | undefined) ?? {};
-  servers.dna = useGlobal
-    ? { command: "dna", args: ["serve"] }
-    : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
+  servers.dna = { command: spec.command, args: [...spec.baseArgs, "serve"] };
   const next = { ...existing, mcpServers: servers };
   if (DRY_RUN) {
     console.log(kleur.yellow(`would upsert mcpServers.dna in  `) + path.relative(root, file));
@@ -404,7 +464,7 @@ async function upsertClaudeMcp(root: string, useGlobal: boolean): Promise<void> 
  * session start; we own only the `mcpServers.dna` key and leave the rest
  * of the JSON intact so users can mix in other MCP servers.
  */
-async function upsertCursorMcp(root: string, useGlobal: boolean): Promise<void> {
+async function upsertCursorMcp(root: string, spec: CmdSpec): Promise<void> {
   const file = path.join(root, ".cursor/mcp.json");
   if (!DRY_RUN) await mkdir(path.dirname(file), { recursive: true });
   let existing: Record<string, unknown> = {};
@@ -416,9 +476,7 @@ async function upsertCursorMcp(root: string, useGlobal: boolean): Promise<void> 
   }
   const servers =
     (existing.mcpServers as Record<string, unknown> | undefined) ?? {};
-  servers.dna = useGlobal
-    ? { command: "dna", args: ["serve"] }
-    : { command: "npx", args: ["-y", "@invariance/dna", "serve"] };
+  servers.dna = { command: spec.command, args: [...spec.baseArgs, "serve"] };
   const next = { ...existing, mcpServers: servers };
   if (DRY_RUN) {
     console.log(kleur.yellow(`would upsert mcpServers.dna in  `) + path.relative(root, file));

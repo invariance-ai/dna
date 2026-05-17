@@ -46,10 +46,14 @@ git clone <target> baseline && (cd baseline && git checkout <SHA>)
 git clone <target> dna     && (cd dna     && git checkout <SHA>)
 
 # 2. Install dna into the dna/ clone only.
+# Until @invariance/dna is on npm, use a local checkout's built CLI via --use-local
+# (or omit the flag — install auto-detects workspace checkouts and switches to
+# local mode automatically). Once published, drop the prefix and use `npx -y`.
 cd dna
-npx -y @invariance/dna init
-npx -y @invariance/dna install claude
-npx -y @invariance/dna index
+DNA_BIN="node /abs/path/to/dna-repo/packages/cli/dist/index.js"
+$DNA_BIN init
+$DNA_BIN install claude --use-local
+$DNA_BIN index
 
 # 3. Run each prompt against each clone with claude -p.
 for p in prompts/*.txt; do

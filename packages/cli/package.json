@@ -4,6 +4,15 @@
   "description": "dna CLI — codebase context for coding agents.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/invariance-ai/dna.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/invariance-ai/dna#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "dna": "./dist/index.js"
   },
@@ -11,6 +20,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "dev": "tsx src/index.ts",
     "prepublishOnly": "tsc"
   },

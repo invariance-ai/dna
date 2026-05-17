@@ -4,6 +4,15 @@
   "description": "Thin Anthropic SDK wrapper for dna's LLM-assisted commands (postmortem, attach, pr-intent).",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/invariance-ai/dna.git",
+    "directory": "packages/llm"
+  },
+  "homepage": "https://github.com/invariance-ai/dna#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "publishConfig": {
@@ -15,7 +24,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

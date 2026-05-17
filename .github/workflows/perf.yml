@@ -60,7 +60,7 @@ jobs:
         id: perf_compare
         run: |
           set +e
-          tsx bench/perf/compare-thresholds.ts \
+          pnpm exec tsx bench/perf/compare-thresholds.ts \
             --baseline bench/baselines/perf-self.json \
             --current bench/perf/results/current.json \
             --md-out bench/perf/results/perf-report.md
@@ -70,7 +70,7 @@ jobs:
         id: verify_compare
         run: |
           set +e
-          tsx bench/perf/compare-verify.ts \
+          pnpm exec tsx bench/perf/compare-verify.ts \
             --baseline bench/baselines/verify-index-self.json \
             --current bench/perf/results/verify-current.json \
             --md-out bench/perf/results/verify-report.md
